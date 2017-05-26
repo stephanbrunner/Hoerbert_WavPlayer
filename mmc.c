@@ -25,8 +25,8 @@ void fwd_blk_part(void*, WORD, WORD);
 
 
 /* Port Controls  (Platform dependent) */
-#define SELECT()	PORTB &= ~_BV(0)	/* PB0: MMC CS = L */
-#define	DESELECT()	PORTB |=  _BV(0)	/* PB0: MMC CS = H */
+#define SELECT()	PORTB &= ~_BV(4)	/* PB4: MMC CS = L */
+#define	DESELECT()	PORTB |=  _BV(4)	/* PB4: MMC CS = H */
 
 
 /*--------------------------------------------------------------------------
@@ -114,7 +114,7 @@ DSTATUS disk_initialize (void)
 	WORD t;
 
 
-	USIPP = 0b00000001;	/* Attach USI to PORTA */
+	USIPP = 0b00000000;	/* Attach USI to PORTB */
 	USICR = 0b00001000;	/* Enable the USI. DO pin is controlled by software */
 
 	for (t = 10; t; t--) rcv_spi();	/* Dummy clocks */

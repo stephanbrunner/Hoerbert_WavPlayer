@@ -51,9 +51,9 @@ delay_us:
 .global rcv_spi
 .func rcv_spi
 rcv_spi:
-	ldi	r24, _BV(2)			;SCK(PA2)
+	ldi	r24, _BV(2)			;SCK(PB2)
 	.rept 16				;Toggle SCK 16 times
-	out	_SFR_IO_ADDR(PINA), r24		;
+	out	_SFR_IO_ADDR(PINB), r24		;
 	.endr					;/
 	nop					;Read shift register
 	in	r24, _SFR_IO_ADDR(USIDR)	;/
@@ -70,20 +70,20 @@ rcv_spi:
 .global xmit_spi
 .func xmit_spi
 xmit_spi:
-	ldi	r25, _BV(2)			; SCK(PA2)
-	in	r22, _SFR_IO_ADDR(PORTA)
+	ldi	r25, _BV(2)			; SCK(PB2)
+	in	r22, _SFR_IO_ADDR(PORTB)
 
 	ldi	r23, 8
-1:	bst	r24, 7				;DO(PA1) = data bit to be sent
-	bld	r22, 1				;
-	out	_SFR_IO_ADDR(PORTA), r22	;/
+1:	bst	r24, 7				;DO(PB5) = data bit to be sent
+	bld	r22, 5				;
+	out	_SFR_IO_ADDR(PORTB), r22	;/
 	lsl	r24				;Next bit
-	out	_SFR_IO_ADDR(PINA), r25		;SCK(PA2) = H
-	out	_SFR_IO_ADDR(PINA), r25		;SCK(PA2) = L
+	out	_SFR_IO_ADDR(PINB), r25		;SCK(PB2) = H
+	out	_SFR_IO_ADDR(PINB), r25		;SCK(PB2) = L
 	dec	r23				;while(--r23)
 	brne	1b				;/
 
-	sbi	_SFR_IO_ADDR(PORTA), 1		;DO(PA1) = H
+	sbi	_SFR_IO_ADDR(PORTB), 5		;DO(PB5) = H
 	ret
 .endfunc
 
@@ -107,11 +107,11 @@ fwd_blk_part:
 	sub	r18, r20		;R19:R18 -= R21:R20
 	sbc	r19, r21		;/
 	; Skip leading data bytes
-	ldi	r24, _BV(2)		;SCK(PA2)
+	ldi	r24, _BV(2)		;SCK(PB2)
 1:	sbiw	ZL, 1			;Skip leading data...
 	brcs	2f			;
 	.rept 16			;Discard a byte on USI
-	out	_SFR_IO_ADDR(PINA), r24	;
+	out	_SFR_IO_ADDR(PINB), r24	;
 	.endr				;/
 	rjmp	1b			;
 2:	sbiw	XL, 0			;Destination?
@@ -215,9 +215,9 @@ fb_wave: ; Forward intermediate data bytes to the wave FIFO
 	sts	FifoWi, r22		;Save FIFO write index
 
 fb_exit:
-	ldi	r24, _BV(2)		;SCK(PA2)
+	ldi	r24, _BV(2)		;SCK(PB2)
 9:	.rept 16			;Discard a byte on USI
-	out	_SFR_IO_ADDR(PINA), r24	;
+	out	_SFR_IO_ADDR(PINB), r24	;
 	.endr				;/
 	subi	r18, lo8(1)		;Repeat r19:r18 times
 	sbci	r19, hi8(1)		;

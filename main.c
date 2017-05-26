@@ -21,7 +21,7 @@
 #include "pff.h"
 
 #ifndef MODE
-#error Wrong make file.
+#define MODE 1 // stereo
 #endif
 
 FUSES = {0xC1, 0xDD, 0xFF};	/* ATtiny861 fuse bytes: Low, High, Extended.
@@ -32,8 +32,8 @@ and use these values to program the fuse bits. */
 
 #define FCC(c1,c2,c3,c4)	(((DWORD)c4<<24)+((DWORD)c3<<16)+((WORD)c2<<8)+(BYTE)c1)	/* FourCC */
 
-#define LED_ON()	PORTB |= _BV(2)
-#define LED_OFF()	PORTB &= ~_BV(2)
+#define LED_ON()	PORTA |= _BV(0)
+#define LED_OFF()	PORTA &= ~_BV(0)
 
 void delay_ms (WORD);	/* Defined in asmfunc.S */
 void delay_us (WORD);	/* Defined in asmfunc.S */
@@ -79,24 +79,24 @@ void led_sign (
 
 
 
-static
-BYTE chk_input (void)	/* 0:Not changed, 1:Changed */
-{
-	BYTE k, n;
-	static BYTE pk, nk;
-
-
-	wdt_reset();
-
-	k = ~((PINA & 0xF8) | ((PINB >> 4) & 0x07));
-	GIFR = _BV(PCIF);
-	n = nk; nk = k;
-	if (n != k || pk == k) return 0;
-
-	pk = k; Cmd = k;
-
-	return 1;
-}
+//static
+//BYTE chk_input (void)	/* 0:Not changed, 1:Changed */
+//{
+	//BYTE k, n;
+	//static BYTE pk, nk;
+//
+//
+	//wdt_reset();
+//
+	//k = ~((PINA & 0xF8) | ((PINB >> 4) & 0x07));
+	//GIFR = _BV(PCIF);
+	//n = nk; nk = k;
+	//if (n != k || pk == k) return 0;
+//
+	//pk = k; Cmd = k;
+//
+	//return 1;
+//}
 
 
 
@@ -155,37 +155,37 @@ void audio_off (void)	/* Disable audio output functions */
 
 
 
-static
-void wait_status (void)	/* Wait for a code change */
-{
-	BYTE n;
-
-
-	if (Cmd) return;
-
-	audio_off();	/* Disable audio output */
-
-	for (;;) {
-		n = 10;				/* Wait for a code change at active mode (100ms max) */
-		do {
-			delay_ms(10);
-			chk_input();
-		} while (--n && !Cmd);
-		if (Cmd) break;		/* Return if any code change is detected within 100ms */
-
-		cli();							/* Enable pin change interrupt */
-		GIMSK = _BV(PCIE1);
-		WDTCR = _BV(WDE) | _BV(WDCE);	/* Disable WDT */
-		WDTCR = 0;
-		sleep_enable();					/* Wait for a code change at power-down mode */
-		sei();
-		sleep_cpu();
-		sleep_disable();
-		wdt_reset();					/* Enable WDT (1s) */
-		WDTCR = _BV(WDE) | 0b110;
-		GIMSK = 0;						/* Disable pin change interrupt */
-	}
-}
+//static
+//void wait_status (void)	/* Wait for a code change */
+//{
+	//BYTE n;
+//
+//
+	//if (Cmd) return;
+//
+	//audio_off();	/* Disable audio output */
+//
+	//for (;;) {
+		//n = 10;				/* Wait for a code change at active mode (100ms max) */
+		//do {
+			//delay_ms(10);
+			//chk_input();
+		//} while (--n && !Cmd);
+		//if (Cmd) break;		/* Return if any code change is detected within 100ms */
+//
+		//cli();							/* Enable pin change interrupt */
+		//GIMSK = _BV(PCIE1);
+		//WDTCR = _BV(WDE) | _BV(WDCE);	/* Disable WDT */
+		//WDTCR = 0;
+		//sleep_enable();					/* Wait for a code change at power-down mode */
+		//sei();
+		//sleep_cpu();
+		//sleep_disable();
+		//wdt_reset();					/* Enable WDT (1s) */
+		//WDTCR = _BV(WDE) | 0b110;
+		//GIMSK = 0;						/* Disable pin change interrupt */
+	//}
+//}
 
 
 
@@ -292,24 +292,24 @@ BYTE play (		/* 0:Normal end, 1:Continue to play, 2:Disk error, 3:No file, 4:Inv
 
 			/* Check input code change */
 			rc = 0;
-			if (chk_input()) {
-				switch (InMode) {
-				case 4:		/* Mode 4: Edge triggered (one-shot) */
-					if (!Cmd) rc = 1;
-					break;
-				case 3: 	/* Mode 3: Edge triggered (retriggerable) */
-					if (Cmd) rc = 1;	/* Restart by a code change but zero */
-					break;
-				case 2:		/* Mode 2: Edge triggered */
-					Cmd = 0;			/* Ignore code changes while playing */
-					break;
-				case 1:		/* Mode 1: Level triggered (sustained to end of the file) */
-					if (Cmd && Cmd != fn) rc = 1;	/* Restart by a code change but zero */
-					break;
-				case 0:	/* Mode 0: Level triggered */
-					if (Cmd != fn) rc = 1;	/* Restart by a code change */
-				}
-			}
+			//if (chk_input()) {
+				//switch (InMode) {
+				//case 4:		/* Mode 4: Edge triggered (one-shot) */
+					//if (!Cmd) rc = 1;
+					//break;
+				//case 3: 	/* Mode 3: Edge triggered (retriggerable) */
+					//if (Cmd) rc = 1;	/* Restart by a code change but zero */
+					//break;
+				//case 2:		/* Mode 2: Edge triggered */
+					//Cmd = 0;			/* Ignore code changes while playing */
+					//break;
+				//case 1:		/* Mode 1: Level triggered (sustained to end of the file) */
+					//if (Cmd && Cmd != fn) rc = 1;	/* Restart by a code change but zero */
+					//break;
+				//case 0:	/* Mode 0: Level triggered */
+					//if (Cmd != fn) rc = 1;	/* Restart by a code change */
+				//}
+			//}
 		} while (!rc && rb == 1024);	/* Repeat until all data read or code change */
 
 		if (rc || !Cmd || InMode >= 2) break;
@@ -338,16 +338,16 @@ int main (void)
 
 
 	MCUSR = 0;								/* Clear reset status */
-	WDTCR = _BV(WDE) | 0b110;				/* Enable WDT (1s) */
+	//WDTCR = _BV(WDE) | 0b110;				/* Enable WDT (1s) */
 	set_sleep_mode(SLEEP_MODE_PWR_DOWN);	/* Select power down mode for sleep */
 	PCMSK0 = 0b11111000;					/* Select pin change interrupt pins (SW1..SW8) */
 	PCMSK1 = 0b01110000;
 
 	/* Initialize ports */
-	PORTA = 0b11111011;		/* PORTA [pppppLHp]*/
-	DDRA  = 0b00000110;
-	PORTB = 0b01110001;		/* PORTB [-pppLLLH] */
-	DDRB  = 0b00001111;
+	PORTA = 0b01111110;		/* PORTA [-ppppppL]*/
+	DDRA  = 0b00000001;
+	PORTB = 0b01110001;		/* PORTB [-pHHLLLp] */
+	DDRB  = 0b00111110;
 
 	sei();
 
@@ -355,16 +355,17 @@ int main (void)
 		if (pf_mount(&Fs) == FR_OK) {	/* Initialize FS */
 
 			/* Load command input mode (if not exist, use mode 0 as default) */
-			strcpy_P((char*)Buff, PSTR("000.TXT"));
-			if (pf_open((char*)Buff) == FR_OK) {
-				pf_read(&InMode, 1, &rb);
-				InMode -= '0';
-			}
+			//strcpy_P((char*)Buff, PSTR("000.TXT"));
+			//if (pf_open((char*)Buff) == FR_OK) {
+				//pf_read(&InMode, 1, &rb);
+				//InMode -= '0';
+			//}
+			InMode = 0;
 
 			/* Main loop */
 			do {
-				wait_status();				/* Wait for any valid code */
-				rc = play(Cmd);				/* Play corresponding audio file */
+				// wait_status();				/* Wait for any valid code */
+				rc = play(1);				/* Play corresponding audio file */
 				if (rc >= 2) led_sign(rc);	/* Display if any error occured */
 				if (rc != 1) Cmd = 0;		/* Clear code when normal end or error */
 			} while (rc != 2);				/* Continue while no disk error */
