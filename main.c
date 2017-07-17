@@ -77,6 +77,50 @@ void led_sign (
 	delay_ms(1000);
 }
 
+void initADC() {
+  /* this function initializes the ADC 
+
+        ADC Prescaler Notes:
+	--------------------
+
+	   ADC Prescaler needs to be set so that the ADC input frequency is between 50 - 200kHz.
+  
+           For more information, see table 17.5 "ADC Prescaler Selections" in 
+           chapter 17.13.2 "ADCSRA – ADC Control and Status Register A"
+          (pages 140 and 141 on the complete ATtiny25/45/85 datasheet, Rev. 2586M–AVR–07/10)
+
+           Valid prescaler values for various clock speeds
+	
+	     Clock   Available prescaler values
+           ---------------------------------------
+             1 MHz   8 (125kHz), 16 (62.5kHz)
+             4 MHz   32 (125kHz), 64 (62.5kHz)
+             8 MHz   64 (125kHz), 128 (62.5kHz)
+            16 MHz   128 (125kHz)
+
+ */
+
+  // 8-bit resolution
+  // set ADLAR to 1 to enable the Left-shift result (only bits ADC9..ADC2 are available)
+  // then, only reading ADCH is sufficient for 8-bit results (256 values)
+
+  ADMUX =
+            (1 << ADLAR) |     // left shift result
+			// ref. voltage to VCC
+            (0 << REFS1) |     // Set ref. voltage bit 1
+            (0 << REFS0) |     // Set ref. voltage bit 0
+			// use ADC6 as analog input
+            (0 << MUX3)  |     // MUX bit 3
+            (1 << MUX2)  |     // MUX bit 2
+            (1 << MUX1)  |     // MUX bit 1
+            (0 << MUX0);       // MUX bit 0
+
+  ADCSRA = 
+            (1 << ADEN)  |     // Enable ADC 
+            (1 << ADPS2) |     // set prescaler bit 2 
+            (1 << ADPS1) |     // set prescaler bit 1 
+            (1 << ADPS0);      // set prescaler bit 0  
+}
 
 
 //static
@@ -243,7 +287,36 @@ DWORD load_header (void)	/* 2:I/O error, 4:Invalid file, >=1024:Ok(number of sam
 	}
 }
 
+static BYTE buttonPressed() {
+	ADCSRA |= (1 << ADSC);         // start ADC measurement
+	while (ADCSRA & (1 << ADSC) ); // wait till conversion complete
 
+	if (ADCH < 6) {
+		return 0;
+	} else if (ADCH < 17) {
+		return 1;
+	} else if (ADCH < 26) {
+		return 2;
+	} else if (ADCH < 40) {
+		return 3;
+	} else if (ADCH < 63) {
+		return 4;
+	} else if (ADCH < 89) {
+		return 5;
+	} else if (ADCH < 129) {
+		return 6;
+	} else if (ADCH < 155) {
+		return 7;
+	} else if (ADCH < 184) {
+		return 8;
+	} else if (ADCH < 205) {
+		return 9;
+	} else if (ADCH < 224) {
+		return 10;
+	} else {
+		return 11;
+	} 
+}
 
 static
 BYTE play (		/* 0:Normal end, 1:Continue to play, 2:Disk error, 3:No file, 4:Invalid file */
@@ -259,7 +332,8 @@ BYTE play (		/* 0:Normal end, 1:Continue to play, 2:Disk error, 3:No file, 4:Inv
 	if (InMode >= 2) Cmd = 0;	/* Clear command code (Edge triggered) */
 
 	/* Open an audio file "nnn.WAV" (nnn=001..255) */
-	i = 2; n = fn;
+	i = 2; 
+	n = fn;
 	do {
 		Buff[i] = (BYTE)(n % 10) + '0'; n /= 10;
 	} while (i--);
@@ -271,7 +345,8 @@ BYTE play (		/* 0:Normal end, 1:Continue to play, 2:Disk error, 3:No file, 4:Inv
 	/* Get file parameters */
 	sz = load_header();
 	if (sz <= 4) return (BYTE)sz;	/* Invalid format */
-	spa = Fs.fptr; sza = sz;		/* Save offset and size of audio data */
+	spa = Fs.fptr; 
+	sza = sz;		/* Save offset and size of audio data */
 
 	LED_ON();
 	audio_on();		/* Enable audio output */
@@ -286,9 +361,20 @@ BYTE play (		/* 0:Normal end, 1:Continue to play, 2:Disk error, 3:No file, 4:Inv
 			btr = (sz > 1024) ? 1024 : (WORD)sz;
 			pf_read(0, btr, &rb);
 			if (btr != rb) {
-				rc = 2; break;
+				rc = 2; 
+				break;
 			}
 			sz -= rb;
+			
+			// check if some button is pressed
+			int buttonValue = buttonPressed();
+			if (buttonValue == 10) {
+				// TODO jump backwards
+			} else if (buttonValue == 11) {
+				// TODO jump forwards
+			} else if (buttonValue != 0) {
+				return 0;
+			}
 
 			/* Check input code change */
 			rc = 0;
@@ -336,7 +422,8 @@ int main (void)
 {
 	BYTE rc;
 
-
+	initADC(); // initialize Analog input (control buttons)
+	
 	MCUSR = 0;								/* Clear reset status */
 	//WDTCR = _BV(WDE) | 0b110;				/* Enable WDT (1s) */
 	set_sleep_mode(SLEEP_MODE_PWR_DOWN);	/* Select power down mode for sleep */
@@ -353,26 +440,25 @@ int main (void)
 
 	for (;;) {
 		if (pf_mount(&Fs) == FR_OK) {	/* Initialize FS */
-
-			/* Load command input mode (if not exist, use mode 0 as default) */
-			//strcpy_P((char*)Buff, PSTR("000.TXT"));
-			//if (pf_open((char*)Buff) == FR_OK) {
-				//pf_read(&InMode, 1, &rb);
-				//InMode -= '0';
-			//}
-			InMode = 0;
-
 			/* Main loop */
 			do {
-				// wait_status();				/* Wait for any valid code */
-				rc = play(1);				/* Play corresponding audio file */
+				// wait for a button to be pressed
+				while (buttonPressed() == 0);
+				delay_ms(10); // the electronics around the button needs time to stabilize.
+				int buttonValue = buttonPressed();
+				
+				// wait for no button pressed
+				while (buttonPressed() != 0);
+				if (buttonValue != 10 && buttonValue != 11) {
+					rc = play(buttonValue); 
+				}
+				
 				if (rc >= 2) led_sign(rc);	/* Display if any error occured */
 				if (rc != 1) Cmd = 0;		/* Clear code when normal end or error */
 			} while (rc != 2);				/* Continue while no disk error */
 
 			audio_off();	/* Disable audio output */
 		}
-		led_sign(2);	/* Disk error or Media mount failed */
 	}
 }
 
