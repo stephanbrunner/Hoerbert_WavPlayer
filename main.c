@@ -353,9 +353,12 @@ BYTE play (		/* 0:Normal end, 1:Continue to play, 2:Disk error, 3:No file, 4:Inv
 
 	for (;;) {
 		if (pf_read(0, 512 - (Fs.fptr % 512), &rb) != FR_OK) {		/* Snip sector unaligned part */
-			rc = 2; break;
+			rc = 2; 
+			break;
 		}
 		sz -= rb;
+		
+		BYTE buttonsDisabled = 0; // to make jumps hearable when FF or RW
 		do {
 			/* Forward a bunch of the audio data to the FIFO */
 			btr = (sz > 1024) ? 1024 : (WORD)sz;
@@ -365,15 +368,38 @@ BYTE play (		/* 0:Normal end, 1:Continue to play, 2:Disk error, 3:No file, 4:Inv
 				break;
 			}
 			sz -= rb;
-			
+						
 			// check if some button is pressed
-			int buttonValue = buttonPressed();
-			if (buttonValue == 10) {
-				// TODO jump backwards
-			} else if (buttonValue == 11) {
-				// TODO jump forwards
-			} else if (buttonValue != 0) {
-				return 0;
+			if (buttonsDisabled) buttonsDisabled--;
+			BYTE buttonValue = buttonPressed();
+			if (!buttonsDisabled && buttonValue != 0) {
+				// debounce
+				delay_ms(1);
+				BYTE nextButtonValue = buttonPressed();
+				while(buttonValue != nextButtonValue) {
+					buttonValue = nextButtonValue;
+					delay_ms(1);
+					nextButtonValue = buttonPressed();
+				}
+				
+				if (buttonValue == 10) {
+					// jump backwards
+					if (Fs.fptr > (DWORD)500 * bt) {
+						pf_lseek(Fs.fptr - (DWORD)500 * btr);
+						sz += (DWORD)1000 * btr;
+					} else {
+						// TODO return and play file from start
+					}
+				} else if (buttonValue == 11) {
+					// jump forward
+					pf_lseek(Fs.fptr + (DWORD)100 * btr);
+					sz -= (DWORD)100 * btr;
+				} else if (buttonValue != 0) {
+					// if any other button was pressed, return
+					// TODO return and play chosen file
+					return 0;
+				}
+				buttonsDisabled = 50;
 			}
 
 			/* Check input code change */
@@ -400,7 +426,8 @@ BYTE play (		/* 0:Normal end, 1:Continue to play, 2:Disk error, 3:No file, 4:Inv
 
 		if (rc || !Cmd || InMode >= 2) break;
 		if (pf_lseek(spa) != FR_OK) {	/* Return top of audio data */
-			rc = 3; break;
+			rc = 3; 
+			break;
 		}
 		sz = sza;
 	}
@@ -444,7 +471,7 @@ int main (void)
 			do {
 				// wait for a button to be pressed
 				while (buttonPressed() == 0);
-				delay_ms(10); // the electronics around the button needs time to stabilize.
+				delay_ms(1); // the electronics around the button needs time to stabilize.
 				int buttonValue = buttonPressed();
 				
 				// wait for no button pressed
@@ -452,6 +479,7 @@ int main (void)
 				if (buttonValue != 10 && buttonValue != 11) {
 					rc = play(buttonValue); 
 				}
+				if (rc > 0) play(rc);
 				
 				if (rc >= 2) led_sign(rc);	/* Display if any error occured */
 				if (rc != 1) Cmd = 0;		/* Clear code when normal end or error */
