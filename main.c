@@ -42,6 +42,14 @@ and use these values to program the fuse bits. */
 #define WRONG_SAMLING_FREQ 17
 #define WRONG_OFFSET 18
 #define UNKNOWN_CHUNK 19
+#define END_OF_FILE 20
+#define HIGHEST_ERROR_CODE 20
+
+// structs
+typedef struct {
+	DWORD numberOfSamples;
+	DWORD dataOffset; 
+	} AUDIOFILE_INFO;
 
 // external methods
 void delay_ms (WORD);	/* Defined in asmfunc.S */
@@ -50,11 +58,12 @@ EMPTY_INTERRUPT(PCINT_vect);
 
 // variables
 volatile BYTE FifoRi, FifoWi, FifoCt;	/* FIFO controls */
-BYTE Buff[256];		/* Audio output FIFO */
-FATFS Fs;			/* File system object */
-DIR Dir;			/* Directory object */
-FILINFO Fno;		/* File information */
-WORD rb;			/* Return value. Put this here to avoid avr-gcc's bug */
+BYTE Buff[256];		/* Audio output FIFO */ // TODO remove this, as it is not used as an audio buffer anymore
+FATFS fileSystem;			/* File system object */
+DIR directory;			/* Directory object */
+FILINFO fileInfo;		/* File information */
+AUDIOFILE_INFO audioFileInfo;
+WORD rb;			/* Return value. Put this here to avoid avr-gcc's bug */ // TODO Maybe this is not a problem anymore? Remove?
 
  
 // Initializes the analog in needed for reading the button:
@@ -164,7 +173,7 @@ static DWORD load_header (void) {
 		if (id == FCC('f','m','t',' ')) {	
 			// some size checks
 			if (chunkSize & 1) {
-				// TODO What is this?
+				// TODO What is this? If odd?
 				chunkSize++;
 			} else if (chunkSize > 128 || chunkSize < 16) { 
 				// Wrong chunk size
@@ -180,23 +189,23 @@ static DWORD load_header (void) {
 			}
 				
 			// Check channels (1/2: Mono/Stereo)
-			BYTE b = Buff[2];
-			if (b < 1 && b > 2) {
+			BYTE numberOfChannels = Buff[2];
+			if (numberOfChannels < 1 && numberOfChannels > 2) {
 				return WRONG_NUMBER_OF_CHANNELS; 			
 			}
 				
 			// Save channel flag
-			GPIOR0 = al = b;	
+			GPIOR0 = al = numberOfChannels;	
 									
 			/* Check resolution (8/16 bit) */
-			b = Buff[14];
-			if (b != 8 && b != 16) {
+			BYTE resolution = Buff[14];
+			if (resolution != 8 && resolution != 16) {
 				return WRONG_RESOLUTION;
 			}
 				
 			// Save resolution flag
-			GPIOR0 |= b;							
-			if (b & 16) {
+			GPIOR0 |= resolution;							
+			if (resolution & 16) {
 				al <<= 1;
 			}
 				
@@ -223,7 +232,7 @@ static DWORD load_header (void) {
 			}
 				
 			// Check offset
-			if (Fs.fptr & (al - 1)) {
+			if (fileSystem.fptr & (al - 1)) {
 				return WRONG_OFFSET;		
 			}
 			
@@ -234,7 +243,7 @@ static DWORD load_header (void) {
 			if (chunkSize & 1) {
 				chunkSize++; // TODO What is this?
 			}
-			ret  = pf_lseek(Fs.fptr + chunkSize);
+			ret  = pf_lseek(fileSystem.fptr + chunkSize);
 			if (ret) {
 				return ret;
 			}
@@ -281,114 +290,114 @@ static BYTE buttonPressed() {
 
 // Opens and plays a file.
 // 
-// @param play File number (1..255)
-// @return 0:Normal end, 1:Continue to play, 2:Disk error, 3:No file, 4:Invalid file
-static BYTE play (BYTE fn) {
-	DWORD sz, spa, sza;
-	FRESULT res;
-	WORD btr;
-	BYTE n, i, rc;
-
-	/* Open an audio file "nnn.WAV" (nnn=001..255) */
-	i = 2; 
-	n = fn;
-	do {
-		Buff[i] = (BYTE)(n % 10) + '0'; n /= 10;
-	} while (i--);
+// @param play File number (1..999)
+// @return 0 if everything OK or FRESULT if not
+static FRESULT load (SHORT filenNumber) {
+	/* Open an audio file "nnn.WAV" (nnn=001..999) */
+	for(int i = 2; i >= 0; i--) {
+		Buff[i] = (BYTE)(filenNumber % 10) + '0'; 
+		filenNumber /= 10;
+	}
 	strcpy_P((char*)&Buff[3], PSTR(".WAV"));
-	res = pf_open((char*)Buff);
-	if (res == FR_NO_FILE) return 3;
-	if (res != FR_OK) return 2;
-
-	/* Get file parameters */
-	sz = load_header();
-	if (sz <= 4) return (BYTE)sz;	/* Invalid format */
-	spa = Fs.fptr; 
-	sza = sz;		/* Save offset and size of audio data */
-
-	audio_on();		/* Enable audio output */
-
-	for (;;) {
-		if (pf_read(0, 512 - (Fs.fptr % 512), &rb) != FR_OK) {		/* Snip sector unaligned part */
-			rc = 2; 
-			break;
-		}
-		sz -= rb;
-		
-		BYTE buttonsDisabled = 0; // to make jumps hearable when FF or RW
-		do {
-			/* Forward a bunch of the audio data to the FIFO */
-			btr = (sz > 1024) ? 1024 : (WORD)sz;
-			pf_read(0, btr, &rb);
-			if (btr != rb) {
-				rc = 2; 
-				break;
-			}
-			sz -= rb;
-						
-			// check if some button is pressed
-			if (buttonsDisabled) buttonsDisabled--;
-			BYTE buttonValue = buttonPressed();
-			if (!buttonsDisabled && buttonValue != 0) {
-				// debounce
-				delay_ms(1);
-				BYTE nextButtonValue = buttonPressed();
-				while(buttonValue != nextButtonValue) {
-					buttonValue = nextButtonValue;
-					delay_ms(1);
-					nextButtonValue = buttonPressed();
-				}
-				
-				if (buttonValue == 10) {
-					// jump backwards
-					if (Fs.fptr > (DWORD)500 * btr) {
-						pf_lseek(Fs.fptr - (DWORD)500 * btr);
-						sz += (DWORD)1000 * btr;
-					} else {
-						// if current position is to close too the start of the file
-						pf_lseek(0);
-						sz = sza;
-						// TODO maybe skip to last file in channel?
-						// wait until no button is pressed, as funny noises may occure otherwise
-						while(buttonPressed() != 0);
-					}
-				} else if (buttonValue == 11) {
-					// jump forward
-					if(sz > (DWORD)100 * btr) {
-						pf_lseek(Fs.fptr + (DWORD)100 * btr);
-						sz -= (DWORD)100 * btr;
-					} else {
-						// if current position is too close to the end of the file
-						// TODO return and jump to next file if possible
-					}
-					
-				} else if (buttonValue != 0) {
-					// if any other button was pressed, return
-					// TODO return and play chosen file
-					return 0;
-				}
-				buttonsDisabled = 50;
-			}
-
-			/* Check input code change */
-			rc = 0;
-
-		} while (!rc && rb == 1024);	/* Repeat until all data read or code change */
-		
-		// TODO if file ended, ++ the current file count
-
-		if (rc) break;
-		if (pf_lseek(spa) != FR_OK) {	/* Return top of audio data */
-			rc = 3; 
-			break;
-		}
-		sz = sza;
+	FRESULT ret = pf_open((char*)Buff);
+	if (ret) {
+		// An error has occurred while opening file
+		return ret;
 	}
 
-	while (FifoCt) ;			/* Wait for audio FIFO empty */
-	OCR1A = 0x80; OCR1B = 0x80;	/* Return DAC out to center */
+	// Get file parameters
+	DWORD numberOfSamples = load_header();
+	if (numberOfSamples <= HIGHEST_ERROR_CODE) {
+		// An error has occurred while loading header
+		return (BYTE)numberOfSamples;
+	}
+
+	// save audio file specs	
+	audioFileInfo.numberOfSamples = numberOfSamples;
+	audioFileInfo.dataOffset = fileSystem.fptr;
+
+	// enable audio output
+	audio_on();
 	
-	return rc;
+	return ret;
+}
+
+// Calculates the samples left to read from the current file
+//
+// @return The number of samples left to read
+DWORD samplesLeftToRead() {
+	return audioFileInfo.numberOfSamples - audioFileInfo.dataOffset - fileSystem.fptr;
+}
+
+// Fills the audio buffer with new data
+// 
+// @return 0 if everything OK, or an error code else
+BYTE updateAudioBuffer() {
+	BYTE ret = 0;
+	
+	// Snip sector unaligned part
+	ret = pf_read(0, 512 - (fileSystem.fptr % 512), &rb);	
+		
+	BYTE buttonsDisabled = 0; // to make jumps hearable when FF or RW
+	do {
+		/* Forward a bunch of the audio data to the FIFO */
+		DWORD size = samplesLeftToRead();
+		WORD btr = (size > 1024) ? 1024 : (WORD)size;
+		ret = pf_read(0, btr, &rb);
+						
+		// check if some button is pressed
+		if (buttonsDisabled) buttonsDisabled--;
+		BYTE buttonValue = buttonPressed();
+		if (!buttonsDisabled && buttonValue != 0) {
+			// debounce
+			delay_ms(1);
+			BYTE nextButtonValue = buttonPressed();
+			while(buttonValue != nextButtonValue) {
+				buttonValue = nextButtonValue;
+				delay_ms(1);
+				nextButtonValue = buttonPressed();
+			}
+				
+			if (buttonValue == 10) {
+				// jump backwards
+				if (fileSystem.fptr > (DWORD)500 * btr) {
+					pf_lseek(fileSystem.fptr - (DWORD)500 * btr);
+				} else {
+					// if current position is to close too the start of the file
+					pf_lseek(audioFileInfo.dataOffset);
+					// TODO maybe skip to last file in channel?
+					// wait until no button is pressed, as funny noises may occure otherwise
+					while(buttonPressed() != 0);
+				}
+			} else if (buttonValue == 11) {
+				// jump forward
+				if(samplesLeftToRead() > (DWORD)100 * btr) {
+					pf_lseek(fileSystem.fptr + (DWORD)100 * btr);
+				} else {
+					// if current position is too close to the end of the file
+					// TODO return and jump to next file if possible
+				}
+			} else if (buttonValue != 0) {
+				// if any other button was pressed, return
+				// TODO return and play chosen file
+				return 0;
+			}
+			buttonsDisabled = 50;
+		}
+	} while (!ret && rb == 1024);	/* Repeat until all data read or code change */
+		
+	// Wait for audio FIFO empty
+	while (FifoCt);	
+	
+	// Return DAC out to center	
+	OCR1A = 0x80; 
+	OCR1B = 0x80;	
+	
+	if (rb != 1024) {
+		return END_OF_FILE;
+	} else {
+		return ret;
+	}
 }
 
 int main (void) {
@@ -410,8 +419,8 @@ int main (void) {
 
 	sei();
 
-	for (;;) {
-		if (pf_mount(&Fs) == FR_OK) {	/* Initialize FS */
+	while (1) {
+		if (pf_mount(&fileSystem) == FR_OK) {	/* Initialize FS */
 			/* Main loop */
 			do {
 				// TODO button evaluation should be outside of that loop and only executed after startup or when channel is done
@@ -424,11 +433,14 @@ int main (void) {
 				// TODO make the button event change a current file variable, and make the loop independend of buttons. Only file ends or buttons pushed in play() will keep the loop alive.
 				while (buttonPressed() != 0);
 				if (buttonValue != 10 && buttonValue != 11) {
-					rc = play(100 + buttonValue); 
+					rc = load(100 + buttonValue); 
+					while (1) {
+						updateAudioBuffer();
+					}
 				}
 				
 				// for debugging. Make the error returned hearable
-				if (rc > 0) play(rc);
+				if (rc > 0) load(rc);
 				
 			} while (rc != 2);				/* Continue while no disk error */
 
