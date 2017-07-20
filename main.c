@@ -34,6 +34,14 @@ and use these values to program the fuse bits. */
 
 // error codes
 #define INVALIDE_FILE 11
+#define NOT_A_WAVE_FILE 12
+#define WRONG_CHUNK_SIZE 13
+#define NOT_LPCM_CODING_TYPE 14
+#define WRONG_NUMBER_OF_CHANNELS 15
+#define WRONG_RESOLUTION 16
+#define WRONG_SAMLING_FREQ 17
+#define WRONG_OFFSET 18
+#define UNKNOWN_CHUNK 19
 
 // external methods
 void delay_ms (WORD);	/* Defined in asmfunc.S */
@@ -142,94 +150,97 @@ static DWORD load_header (void) {
 	/* Check RIFF-WAVE file header */
 	ret = pf_read(Buff, 12, &rb);
 	if (rb != 12 || LD_DWORD(Buff+8) != FCC('W','A','V','E')) {
-		return INVALIDE_FILE;
+		return NOT_A_WAVE_FILE;
 	}
 
 	BYTE al = 0;
 	for (;;) {
-		ret = pf_read(Buff, 8, &rb); /* Get Chunk ID and size */
-		DWORD sz = LD_DWORD(&Buff[4]);		/* Chunk size */
-		switch (LD_DWORD(&Buff[0])) {	/* Switch by chunk type */
-			case FCC('f','m','t',' ') :		/* 'fmt ' chunk */
-				// some size checks
-				if (sz & 1) {
-					// TODO What is this?
-					sz++;
-				} else if (sz > 128 || sz < 16) { 
-					// Wrong chunk size
-					return INVALIDE_FILE;		
-				}
+		// Get Chunk ID and size
+		ret = pf_read(Buff, 8, &rb); 
+		DWORD chunkSize = LD_DWORD(&Buff[4]);
+		DWORD id = LD_DWORD(&Buff[0]);
+		
+		// analyze id
+		if (id == FCC('f','m','t',' ')) {	
+			// some size checks
+			if (chunkSize & 1) {
+				// TODO What is this?
+				chunkSize++;
+			} else if (chunkSize > 128 || chunkSize < 16) { 
+				// Wrong chunk size
+				return WRONG_CHUNK_SIZE;		
+			}
 				
-				// Get the chunk content
-				ret = pf_read(Buff, sz, &rb); 
+			// Get the chunk content
+			ret = pf_read(Buff, chunkSize, &rb); 
 				
-				// Check coding type (1: LPCM)
-				if (Buff[0] != 1) {
-					return INVALIDE_FILE;				
-				}
+			// Check coding type (1: LPCM)
+			if (Buff[0] != 1) {
+				return NOT_LPCM_CODING_TYPE;				
+			}
 				
-				// Check channels (1/2: Mono/Stereo)
-				BYTE b = Buff[2];
-				if (b < 1 && b > 2) {
-					return INVALIDE_FILE; 			
-				}
+			// Check channels (1/2: Mono/Stereo)
+			BYTE b = Buff[2];
+			if (b < 1 && b > 2) {
+				return WRONG_NUMBER_OF_CHANNELS; 			
+			}
 				
-				// Save channel flag
-				GPIOR0 = al = b;	
+			// Save channel flag
+			GPIOR0 = al = b;	
 									
-				/* Check resolution (8/16 bit) */
-				b = Buff[14];
-				if (b != 8 && b != 16) {
-					return INVALIDE_FILE;
-				}
+			/* Check resolution (8/16 bit) */
+			b = Buff[14];
+			if (b != 8 && b != 16) {
+				return WRONG_RESOLUTION;
+			}
 				
-				// Save resolution flag
-				GPIOR0 |= b;							
-				if (b & 16) {
-					al <<= 1;
-				}
+			// Save resolution flag
+			GPIOR0 |= b;							
+			if (b & 16) {
+				al <<= 1;
+			}
 				
-				// Check sampling frequency (8k-48k)
-				DWORD frequency = LD_DWORD(&Buff[4]);					
-				if (frequency < 8000 || frequency > 48000) {
-				 return INVALIDE_FILE;
-				}
+			// Check sampling frequency (8k-48k)
+			DWORD frequency = LD_DWORD(&Buff[4]);					
+			if (frequency < 8000 || frequency > 48000) {
+				return WRONG_SAMLING_FREQ;
+			}
 				
-				// Set interval timer (sampling period)
-				OCR0A = (BYTE)(16000000UL/8/frequency) - 1;	
-				if (ret) {
-					return ret;
-				}	
-				break;
-			case FCC('d','a','t','a') :		/* 'data' chunk (start to play) */
-				// Check if format valid
-				if (!al) {
-					return INVALIDE_FILE;
-				}
-				
-				// Check size
-				if (sz < 1024 || (sz & (al - 1))) {
-					return INVALIDE_FILE;	
-				}
-				
-				// Check offset
-				if (Fs.fptr & (al - 1)) {
-					return INVALIDE_FILE;		
-				}
-				return sz;
-			case FCC('D','I','S','P') :		/* 'DISP' chunk (skip) */
-			case FCC('f','a','c','t') :		/* 'fact' chunk (skip) */
-			case FCC('L','I','S','T') :		/* 'LIST' chunk (skip) */
-				if (sz & 1) {
-					sz++; // TODO What is this?
-				}
-				ret  = pf_lseek(Fs.fptr + sz);
-				if (ret) {
-					return ret;
-				}
-				break;
-			default :						/* Unknown chunk */
+			// Set interval timer (sampling period)
+			OCR0A = (BYTE)(16000000UL/8/frequency) - 1;	
+			if (ret) {
+				return ret;
+			}	
+		} else if (id == FCC('d','a','t','a')) {
+			// Check if format valid
+			if (!al) {
 				return INVALIDE_FILE;
+			}
+				
+			// Check size
+			if (chunkSize < 1024 || (chunkSize & (al - 1))) {
+				return WRONG_CHUNK_SIZE;	
+			}
+				
+			// Check offset
+			if (Fs.fptr & (al - 1)) {
+				return WRONG_OFFSET;		
+			}
+			
+			// return number of samples, file is ready to play now
+			return chunkSize;
+		} else if (id == FCC('D','I','S','P') || id == FCC('f','a','c','t') || id == FCC('L','I','S','T')) {
+			// skip unused chunks
+			if (chunkSize & 1) {
+				chunkSize++; // TODO What is this?
+			}
+			ret  = pf_lseek(Fs.fptr + chunkSize);
+			if (ret) {
+				return ret;
+			}
+		} else {
+			// unknown chunk
+			return UNKNOWN_CHUNK;
 		}
 	}
 }
@@ -413,7 +424,7 @@ int main (void) {
 				// TODO make the button event change a current file variable, and make the loop independend of buttons. Only file ends or buttons pushed in play() will keep the loop alive.
 				while (buttonPressed() != 0);
 				if (buttonValue != 10 && buttonValue != 11) {
-					rc = play(buttonValue); 
+					rc = play(100 + buttonValue); 
 				}
 				
 				// for debugging. Make the error returned hearable
