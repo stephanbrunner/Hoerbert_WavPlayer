@@ -123,27 +123,6 @@ void initADC() {
 }
 
 
-//static
-//BYTE chk_input (void)	/* 0:Not changed, 1:Changed */
-//{
-	//BYTE k, n;
-	//static BYTE pk, nk;
-//
-//
-	//wdt_reset();
-//
-	//k = ~((PINA & 0xF8) | ((PINB >> 4) & 0x07));
-	//GIFR = _BV(PCIF);
-	//n = nk; nk = k;
-	//if (n != k || pk == k) return 0;
-//
-	//pk = k; Cmd = k;
-//
-	//return 1;
-//}
-
-
-
 static
 void ramp (		/* Ramp-up/down audio output (anti-pop feature) */
 	int dir		/* 0:Ramp-down, 1:Ramp-up */
@@ -196,42 +175,6 @@ void audio_off (void)	/* Disable audio output functions */
 		TCCR1A = 0;	TCCR1B = 0;	/* Stop PWM */
 	}
 }
-
-
-
-//static
-//void wait_status (void)	/* Wait for a code change */
-//{
-	//BYTE n;
-//
-//
-	//if (Cmd) return;
-//
-	//audio_off();	/* Disable audio output */
-//
-	//for (;;) {
-		//n = 10;				/* Wait for a code change at active mode (100ms max) */
-		//do {
-			//delay_ms(10);
-			//chk_input();
-		//} while (--n && !Cmd);
-		//if (Cmd) break;		/* Return if any code change is detected within 100ms */
-//
-		//cli();							/* Enable pin change interrupt */
-		//GIMSK = _BV(PCIE1);
-		//WDTCR = _BV(WDE) | _BV(WDCE);	/* Disable WDT */
-		//WDTCR = 0;
-		//sleep_enable();					/* Wait for a code change at power-down mode */
-		//sei();
-		//sleep_cpu();
-		//sleep_disable();
-		//wdt_reset();					/* Enable WDT (1s) */
-		//WDTCR = _BV(WDE) | 0b110;
-		//GIMSK = 0;						/* Disable pin change interrupt */
-	//}
-//}
-
-
 
 static
 DWORD load_header (void)	/* 2:I/O error, 4:Invalid file, >=1024:Ok(number of samples) */
@@ -384,16 +327,27 @@ BYTE play (		/* 0:Normal end, 1:Continue to play, 2:Disk error, 3:No file, 4:Inv
 				
 				if (buttonValue == 10) {
 					// jump backwards
-					if (Fs.fptr > (DWORD)500 * bt) {
+					if (Fs.fptr > (DWORD)500 * btr) {
 						pf_lseek(Fs.fptr - (DWORD)500 * btr);
 						sz += (DWORD)1000 * btr;
 					} else {
-						// TODO return and play file from start
+						// if current position is to close too the start of the file
+						pf_lseek(0);
+						sz = sza;
+						// TODO maybe skip to last file in channel?
+						// wait until no button is pressed, as funny noises may occure otherwise
+						while(buttonPressed() != 0);
 					}
 				} else if (buttonValue == 11) {
 					// jump forward
-					pf_lseek(Fs.fptr + (DWORD)100 * btr);
-					sz -= (DWORD)100 * btr;
+					if(sz > (DWORD)100 * btr) {
+						pf_lseek(Fs.fptr + (DWORD)100 * btr);
+						sz -= (DWORD)100 * btr;
+					} else {
+						// if current position is too close to the end of the file
+						// TODO return and jump to next file if possible
+					}
+					
 				} else if (buttonValue != 0) {
 					// if any other button was pressed, return
 					// TODO return and play chosen file
@@ -404,25 +358,10 @@ BYTE play (		/* 0:Normal end, 1:Continue to play, 2:Disk error, 3:No file, 4:Inv
 
 			/* Check input code change */
 			rc = 0;
-			//if (chk_input()) {
-				//switch (InMode) {
-				//case 4:		/* Mode 4: Edge triggered (one-shot) */
-					//if (!Cmd) rc = 1;
-					//break;
-				//case 3: 	/* Mode 3: Edge triggered (retriggerable) */
-					//if (Cmd) rc = 1;	/* Restart by a code change but zero */
-					//break;
-				//case 2:		/* Mode 2: Edge triggered */
-					//Cmd = 0;			/* Ignore code changes while playing */
-					//break;
-				//case 1:		/* Mode 1: Level triggered (sustained to end of the file) */
-					//if (Cmd && Cmd != fn) rc = 1;	/* Restart by a code change but zero */
-					//break;
-				//case 0:	/* Mode 0: Level triggered */
-					//if (Cmd != fn) rc = 1;	/* Restart by a code change */
-				//}
-			//}
+
 		} while (!rc && rb == 1024);	/* Repeat until all data read or code change */
+		
+		// TODO if file ended, ++ the current file count
 
 		if (rc || !Cmd || InMode >= 2) break;
 		if (pf_lseek(spa) != FR_OK) {	/* Return top of audio data */
@@ -469,16 +408,20 @@ int main (void)
 		if (pf_mount(&Fs) == FR_OK) {	/* Initialize FS */
 			/* Main loop */
 			do {
+				// TODO button evaluation should be outside of that loop and only executed after startup or when channel is done
 				// wait for a button to be pressed
 				while (buttonPressed() == 0);
 				delay_ms(1); // the electronics around the button needs time to stabilize.
 				int buttonValue = buttonPressed();
 				
 				// wait for no button pressed
+				// TODO make the button event change a current file variable, and make the loop independend of buttons. Only file ends or buttons pushed in play() will keep the loop alive.
 				while (buttonPressed() != 0);
 				if (buttonValue != 10 && buttonValue != 11) {
 					rc = play(buttonValue); 
 				}
+				
+				// for debugging. Make the error returned hearable
 				if (rc > 0) play(rc);
 				
 				if (rc >= 2) led_sign(rc);	/* Display if any error occured */
