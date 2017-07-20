@@ -32,6 +32,9 @@ and use these values to program the fuse bits. */
 #define FCC(c1,c2,c3,c4)	(((DWORD)c4<<24)+((DWORD)c3<<16)+((WORD)c2<<8)+(BYTE)c1)	/* FourCC */
 #define MODE 1 // stereo
 
+// error codes
+#define INVALIDE_FILE 11
+
 // external methods
 void delay_ms (WORD);	/* Defined in asmfunc.S */
 void delay_us (WORD);	/* Defined in asmfunc.S */
@@ -132,55 +135,101 @@ static void audio_off (void) {
 
 // Loads the header
 // 
-// @return error code FRESULT or if bigger than 1024, the number of samples
+// @return error code FRESULT or INVALIDE_FILE or if bigger than 1024, the number of samples
 static DWORD load_header (void) {
-	DWORD sz, f;
-	BYTE b, al = 0;
-
+	DWORD ret = 0;
 
 	/* Check RIFF-WAVE file header */
-	if (pf_read(Buff, 12, &rb)) return 2;
-	if (rb != 12 || LD_DWORD(Buff+8) != FCC('W','A','V','E')) return 4;
+	ret = pf_read(Buff, 12, &rb);
+	if (rb != 12 || LD_DWORD(Buff+8) != FCC('W','A','V','E')) {
+		return INVALIDE_FILE;
+	}
 
+	BYTE al = 0;
 	for (;;) {
-		if (pf_read(Buff, 8, &rb)) return 2;		/* Get Chunk ID and size */
-		if (rb != 8) return 4;
-		sz = LD_DWORD(&Buff[4]);		/* Chunk size */
-
+		ret = pf_read(Buff, 8, &rb); /* Get Chunk ID and size */
+		DWORD sz = LD_DWORD(&Buff[4]);		/* Chunk size */
 		switch (LD_DWORD(&Buff[0])) {	/* Switch by chunk type */
-		case FCC('f','m','t',' ') :		/* 'fmt ' chunk */
-			if (sz & 1) sz++;
-			if (sz > 128 || sz < 16) return 4;		/* Check chunk size */
-			if (pf_read(Buff, sz, &rb)) return 2;	/* Get the chunk content */
-			if (rb != sz) return 4;
-			if (Buff[0] != 1) return 4;				/* Check coding type (1: LPCM) */
-			b = Buff[2];
-			if (b < 1 && b > 2) return 4; 			/* Check channels (1/2: Mono/Stereo) */
-			GPIOR0 = al = b;						/* Save channel flag */
-			b = Buff[14];
-			if (b != 8 && b != 16) return 4;		/* Check resolution (8/16 bit) */
-			GPIOR0 |= b;							/* Save resolution flag */
-			if (b & 16) al <<= 1;
-			f = LD_DWORD(&Buff[4]);					/* Check sampling freqency (8k-48k) */
-			if (f < 8000 || f > 48000) return 4;
-			OCR0A = (BYTE)(16000000UL/8/f) - 1;		/* Set interval timer (sampling period) */
-			break;
-
-		case FCC('d','a','t','a') :		/* 'data' chunk (start to play) */
-			if (!al) return 4;							/* Check if format valid */
-			if (sz < 1024 || (sz & (al - 1))) return 4;	/* Check size */
-			if (Fs.fptr & (al - 1)) return 4;			/* Check offset */
-			return sz;
-
-		case FCC('D','I','S','P') :		/* 'DISP' chunk (skip) */
-		case FCC('f','a','c','t') :		/* 'fact' chunk (skip) */
-		case FCC('L','I','S','T') :		/* 'LIST' chunk (skip) */
-			if (sz & 1) sz++;
-			if (pf_lseek(Fs.fptr + sz)) return 2;
-			break;
-
-		default :						/* Unknown chunk */
-			return 4;
+			case FCC('f','m','t',' ') :		/* 'fmt ' chunk */
+				// some size checks
+				if (sz & 1) {
+					// TODO What is this?
+					sz++;
+				} else if (sz > 128 || sz < 16) { 
+					// Wrong chunk size
+					return INVALIDE_FILE;		
+				}
+				
+				// Get the chunk content
+				ret = pf_read(Buff, sz, &rb); 
+				
+				// Check coding type (1: LPCM)
+				if (Buff[0] != 1) {
+					return INVALIDE_FILE;				
+				}
+				
+				// Check channels (1/2: Mono/Stereo)
+				BYTE b = Buff[2];
+				if (b < 1 && b > 2) {
+					return INVALIDE_FILE; 			
+				}
+				
+				// Save channel flag
+				GPIOR0 = al = b;	
+									
+				/* Check resolution (8/16 bit) */
+				b = Buff[14];
+				if (b != 8 && b != 16) {
+					return INVALIDE_FILE;
+				}
+				
+				// Save resolution flag
+				GPIOR0 |= b;							
+				if (b & 16) {
+					al <<= 1;
+				}
+				
+				// Check sampling frequency (8k-48k)
+				DWORD frequency = LD_DWORD(&Buff[4]);					
+				if (frequency < 8000 || frequency > 48000) {
+				 return INVALIDE_FILE;
+				}
+				
+				// Set interval timer (sampling period)
+				OCR0A = (BYTE)(16000000UL/8/frequency) - 1;	
+				if (ret) {
+					return ret;
+				}	
+				break;
+			case FCC('d','a','t','a') :		/* 'data' chunk (start to play) */
+				// Check if format valid
+				if (!al) {
+					return INVALIDE_FILE;
+				}
+				
+				// Check size
+				if (sz < 1024 || (sz & (al - 1))) {
+					return INVALIDE_FILE;	
+				}
+				
+				// Check offset
+				if (Fs.fptr & (al - 1)) {
+					return INVALIDE_FILE;		
+				}
+				return sz;
+			case FCC('D','I','S','P') :		/* 'DISP' chunk (skip) */
+			case FCC('f','a','c','t') :		/* 'fact' chunk (skip) */
+			case FCC('L','I','S','T') :		/* 'LIST' chunk (skip) */
+				if (sz & 1) {
+					sz++; // TODO What is this?
+				}
+				ret  = pf_lseek(Fs.fptr + sz);
+				if (ret) {
+					return ret;
+				}
+				break;
+			default :						/* Unknown chunk */
+				return INVALIDE_FILE;
 		}
 	}
 }
