@@ -5,7 +5,8 @@
 / policy of following trems.
 /
 /  Copyright (C) 2013, ChaN, all right reserved.
-/
+/  Copyright (C) 2017, Stephan Brunner, all right reserved.
+/ 
 / * This project is a free software and there is NO WARRANTY.
 / * No restriction on use. You can use, modify and redistribute it for
 /   personal, non-profit or commercial products UNDER YOUR RESPONSIBILITY.
@@ -20,92 +21,53 @@
 #include <avr/wdt.h>
 #include "pff.h"
 
-#ifndef MODE
-#define MODE 1 // stereo
-#endif
-
+// fuses
 FUSES = {0xC1, 0xDD, 0xFF};	/* ATtiny861 fuse bytes: Low, High, Extended.
 This is the fuse settings of this project. The fuse data will be included
 in the output hex file with program code. However some old flash programmers
 cannot load the fuse bits from hex file. If it is the case, remove this line
 and use these values to program the fuse bits. */
 
+// constants
 #define FCC(c1,c2,c3,c4)	(((DWORD)c4<<24)+((DWORD)c3<<16)+((WORD)c2<<8)+(BYTE)c1)	/* FourCC */
+#define MODE 1 // stereo
 
-#define LED_ON()	PORTA |= _BV(0)
-#define LED_OFF()	PORTA &= ~_BV(0)
-
+// external methods
 void delay_ms (WORD);	/* Defined in asmfunc.S */
 void delay_us (WORD);	/* Defined in asmfunc.S */
-
 EMPTY_INTERRUPT(PCINT_vect);
 
-
-/*---------------------------------------------------------*/
-/* Work Area                                               */
-/*---------------------------------------------------------*/
-
+// variables
 volatile BYTE FifoRi, FifoWi, FifoCt;	/* FIFO controls */
 BYTE Buff[256];		/* Audio output FIFO */
-
-BYTE InMode, Cmd;	/* Input mode and received command value */
-
 FATFS Fs;			/* File system object */
 DIR Dir;			/* Directory object */
 FILINFO Fno;		/* File information */
-
 WORD rb;			/* Return value. Put this here to avoid avr-gcc's bug */
 
-
-
-/*---------------------------------------------------------*/
-/* Sub-routines                                            */
-/*---------------------------------------------------------*/
-
-
-static
-void led_sign (
-	BYTE ct		/* Number of flashes */
-)
-{
-	do {
-		delay_ms(200);
-		LED_ON();
-		delay_ms(100);
-		LED_OFF();
-	} while (--ct);
-	delay_ms(1000);
-}
-
+ 
+// Initializes the analog in needed for reading the button:
+// 	   ADC Prescaler needs to be set so that the ADC input frequency is between 50 - 200kHz.
+//
+//            For more information, see table 17.5 "ADC Prescaler Selections" in
+//            chapter 17.13.2 "ADCSRA – ADC Control and Status Register A"
+//           (pages 140 and 141 on the complete ATtiny25/45/85 datasheet, Rev. 2586M–AVR–07/10)
+//
+//            Valid prescaler values for various clock speeds
+//
+// 	     Clock   Available prescaler values
+//            ---------------------------------------
+//              1 MHz   8 (125kHz), 16 (62.5kHz)
+//              4 MHz   32 (125kHz), 64 (62.5kHz)
+//              8 MHz   64 (125kHz), 128 (62.5kHz)
+//             16 MHz   128 (125kHz)
+//
+//   8-bit resolution:
+//   set ADLAR to 1 to enable the Left-shift result (only bits ADC9..ADC2 are available)
+//   then, only reading ADCH is sufficient for 8-bit results (256 values)
 void initADC() {
-  /* this function initializes the ADC 
-
-        ADC Prescaler Notes:
-	--------------------
-
-	   ADC Prescaler needs to be set so that the ADC input frequency is between 50 - 200kHz.
-  
-           For more information, see table 17.5 "ADC Prescaler Selections" in 
-           chapter 17.13.2 "ADCSRA – ADC Control and Status Register A"
-          (pages 140 and 141 on the complete ATtiny25/45/85 datasheet, Rev. 2586M–AVR–07/10)
-
-           Valid prescaler values for various clock speeds
-	
-	     Clock   Available prescaler values
-           ---------------------------------------
-             1 MHz   8 (125kHz), 16 (62.5kHz)
-             4 MHz   32 (125kHz), 64 (62.5kHz)
-             8 MHz   64 (125kHz), 128 (62.5kHz)
-            16 MHz   128 (125kHz)
-
- */
-
-  // 8-bit resolution
-  // set ADLAR to 1 to enable the Left-shift result (only bits ADC9..ADC2 are available)
-  // then, only reading ADCH is sufficient for 8-bit results (256 values)
-
   ADMUX =
-            (1 << ADLAR) |     // left shift result
+            (1 << ADLAR) |     // left shift result -> 8-bit mode
 			// ref. voltage to VCC
             (0 << REFS1) |     // Set ref. voltage bit 1
             (0 << REFS0) |     // Set ref. voltage bit 0
@@ -122,36 +84,31 @@ void initADC() {
             (1 << ADPS0);      // set prescaler bit 0  
 }
 
+// Ramp-up/down audio output (anti-pop feature) 
+// 
+// @param up: 1 to ramp up, 0 to ramp down
+static void ramp (int up) {
+	BYTE value;
+	BYTE direction;
 
-static
-void ramp (		/* Ramp-up/down audio output (anti-pop feature) */
-	int dir		/* 0:Ramp-down, 1:Ramp-up */
-)
-{
-#if MODE != 0	/* This function is enebled on non-OCL output cfg. */
-	BYTE v, d, n;
-
-
-	if (dir) {
-		v = 0; d = 1;
+	if (up) {
+		value = 0; 
+		direction = 1;
 	} else {
-		v = 128; d = 0xFF;
+		value = 128; 
+		direction = 0xFF;
 	}
 
-	n = 128;
-	do {
-		v += d;
-		OCR1A = v; OCR1B = v;
+	for (BYTE i = 0; i < 128; i++) {
+		value += direction;
+		OCR1A = value;
+		OCR1B = value;
 		delay_us(100);
-	} while (--n);
-#endif
+	}
 }
 
-
-
-static
-void audio_on (void)	/* Enable audio output functions */
-{
+/* Enable audio output functions */
+static void audio_on (void)	{
 	if (!TCCR0B) {
 		FifoCt = 0; FifoRi = 0; FifoWi = 0;		/* Reset audio FIFO */
 		PLLCSR = 0b00000110;	/* Select PLL clock for TC1.ck */
@@ -164,11 +121,8 @@ void audio_on (void)	/* Enable audio output functions */
 	}
 }
 
-
-
-static
-void audio_off (void)	/* Disable audio output functions */
-{
+// Disable audio output functions
+static void audio_off (void) {
 	if (TCCR0B) {
 		TCCR0B = 0;				/* Stop audio timer */
 		ramp(0);				/* Ramp-down to GND level */
@@ -176,9 +130,10 @@ void audio_off (void)	/* Disable audio output functions */
 	}
 }
 
-static
-DWORD load_header (void)	/* 2:I/O error, 4:Invalid file, >=1024:Ok(number of samples) */
-{
+// Loads the header
+// 
+// @return error code FRESULT or if bigger than 1024, the number of samples
+static DWORD load_header (void) {
 	DWORD sz, f;
 	BYTE b, al = 0;
 
@@ -230,6 +185,9 @@ DWORD load_header (void)	/* 2:I/O error, 4:Invalid file, >=1024:Ok(number of sam
 	}
 }
 
+// Polls and returns the button state
+//
+// @return The button that is currently pressed (1..11) or 0 of no button is pressed
 static BYTE buttonPressed() {
 	ADCSRA |= (1 << ADSC);         // start ADC measurement
 	while (ADCSRA & (1 << ADSC) ); // wait till conversion complete
@@ -261,18 +219,15 @@ static BYTE buttonPressed() {
 	} 
 }
 
-static
-BYTE play (		/* 0:Normal end, 1:Continue to play, 2:Disk error, 3:No file, 4:Invalid file */
-	BYTE fn		/* File number (1..255) */
-)
-{
+// Opens and plays a file.
+// 
+// @param play File number (1..255)
+// @return 0:Normal end, 1:Continue to play, 2:Disk error, 3:No file, 4:Invalid file
+static BYTE play (BYTE fn) {
 	DWORD sz, spa, sza;
 	FRESULT res;
 	WORD btr;
 	BYTE n, i, rc;
-
-
-	if (InMode >= 2) Cmd = 0;	/* Clear command code (Edge triggered) */
 
 	/* Open an audio file "nnn.WAV" (nnn=001..255) */
 	i = 2; 
@@ -291,7 +246,6 @@ BYTE play (		/* 0:Normal end, 1:Continue to play, 2:Disk error, 3:No file, 4:Inv
 	spa = Fs.fptr; 
 	sza = sz;		/* Save offset and size of audio data */
 
-	LED_ON();
 	audio_on();		/* Enable audio output */
 
 	for (;;) {
@@ -363,7 +317,7 @@ BYTE play (		/* 0:Normal end, 1:Continue to play, 2:Disk error, 3:No file, 4:Inv
 		
 		// TODO if file ended, ++ the current file count
 
-		if (rc || !Cmd || InMode >= 2) break;
+		if (rc) break;
 		if (pf_lseek(spa) != FR_OK) {	/* Return top of audio data */
 			rc = 3; 
 			break;
@@ -373,19 +327,11 @@ BYTE play (		/* 0:Normal end, 1:Continue to play, 2:Disk error, 3:No file, 4:Inv
 
 	while (FifoCt) ;			/* Wait for audio FIFO empty */
 	OCR1A = 0x80; OCR1B = 0x80;	/* Return DAC out to center */
-
-	LED_OFF();
-
+	
 	return rc;
 }
 
-
-
-/*-----------------------------------------------------------------------*/
-/* Main                                                                  */
-
-int main (void)
-{
+int main (void) {
 	BYTE rc;
 
 	initADC(); // initialize Analog input (control buttons)
@@ -424,8 +370,6 @@ int main (void)
 				// for debugging. Make the error returned hearable
 				if (rc > 0) play(rc);
 				
-				if (rc >= 2) led_sign(rc);	/* Display if any error occured */
-				if (rc != 1) Cmd = 0;		/* Clear code when normal end or error */
 			} while (rc != 2);				/* Continue while no disk error */
 
 			audio_off();	/* Disable audio output */
