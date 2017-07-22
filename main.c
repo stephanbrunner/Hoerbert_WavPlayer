@@ -32,7 +32,8 @@ and use these values to program the fuse bits. */
 #define FCC(c1,c2,c3,c4)	(((DWORD)c4<<24)+((DWORD)c3<<16)+((WORD)c2<<8)+(BYTE)c1)	/* FourCC */
 #define MODE 1 // stereo
 #define FF_SPEED 100
-#define RW_SPEED 500
+#define RW_SPEED 200
+#define AUDIO_CLUSTER_SIZE_RW_FF 50 // The size of the Audio clusters hearable while rw/ff
 
 // error codes
 #define INVALIDE_FILE 11
@@ -41,7 +42,7 @@ and use these values to program the fuse bits. */
 #define NOT_LPCM_CODING_TYPE 14
 #define WRONG_NUMBER_OF_CHANNELS 15
 #define WRONG_RESOLUTION 16
-#define WRONG_SAMLING_FREQ 17
+#define WRONG_SAMPLING_FREQ 17
 #define WRONG_OFFSET 18
 #define UNKNOWN_CHUNK 19
 #define END_OF_FILE 20
@@ -51,7 +52,7 @@ and use these values to program the fuse bits. */
 typedef struct {
 	DWORD numberOfSamples;
 	DWORD dataOffset; 
-	} AUDIOFILE_INFO;
+} AUDIOFILE_INFO;
 
 // external methods
 void delay_ms (WORD);	/* Defined in asmfunc.S */
@@ -206,7 +207,8 @@ static DWORD load_header (void) {
 			}
 				
 			// Save channel flag
-			GPIOR0 = al = numberOfChannels;	
+			GPIOR0 = numberOfChannels;
+			al = numberOfChannels;	
 									
 			/* Check resolution (8/16 bit) */
 			BYTE resolution = Buff[14];
@@ -223,7 +225,7 @@ static DWORD load_header (void) {
 			// Check sampling frequency (8k-48k)
 			DWORD frequency = LD_DWORD(&Buff[4]);					
 			if (frequency < 8000 || frequency > 48000) {
-				return WRONG_SAMLING_FREQ;
+				return WRONG_SAMPLING_FREQ;
 			}
 				
 			// Set interval timer (sampling period)
@@ -234,6 +236,7 @@ static DWORD load_header (void) {
 				return INVALIDE_FILE;
 			}
 				
+			// TODO What does the following code do exactly?
 			// Check size
 			if (chunkSize < 1024 || (chunkSize & (al - 1))) {
 				return WRONG_CHUNK_SIZE;	
@@ -250,7 +253,7 @@ static DWORD load_header (void) {
 		} else if (id == FCC('D','I','S','P') || id == FCC('f','a','c','t') || id == FCC('L','I','S','T')) {
 			// skip unused chunks
 			if (chunkSize & 1) {
-				chunkSize++; // TODO What is this?
+				chunkSize++; // TODO What is this? If odd?...
 			}
 			ret  = pf_lseek(fileSystem.fptr + chunkSize);
 			if (ret) {
@@ -335,7 +338,7 @@ static FRESULT load (SHORT filenNumber) {
 //
 // @return The number of samples left to read
 DWORD samplesLeftToRead() {
-	return audioFileInfo.numberOfSamples - audioFileInfo.dataOffset - fileSystem.fptr;
+	return audioFileInfo.numberOfSamples + audioFileInfo.dataOffset - fileSystem.fptr;
 }
 
 // Fills the audio buffer with new data
@@ -412,12 +415,16 @@ int main (void) {
 			BYTE ret = load(currentChannel * 100 + currentFile);
 			BYTE buttonsDisabled = 0; // to make jumps hearable when FF or RW
 			while (ret == 0) {
+				// update Buffer and handle end of file error and other errors
 				ret = updateAudioBuffer();
-				
-				// handle end of file error
 				if (ret == END_OF_FILE) {
 					currentFile++;
 					ret = load(currentChannel * 100 + currentFile);
+					if (ret) {
+						break;
+					}
+				} else if (ret) {
+					break;
 				}
 								
 				// poll buttons
@@ -437,35 +444,66 @@ int main (void) {
 					if (buttonValue == 10) {
 						// jump backwards
 						if (fileSystem.fptr > (DWORD)RW_SPEED * 1024) {
-							pf_lseek(fileSystem.fptr - (DWORD)RW_SPEED * 1024);
+							ret = pf_lseek(fileSystem.fptr - (DWORD)RW_SPEED * 1024);
+							if (ret) {
+								break;
+							}
 						} else {
 							// if current position is to close too the start of the file
-							pf_lseek(audioFileInfo.dataOffset);
-							// TODO maybe skip to last file in channel?
-							// wait until no button is pressed, as funny noises may occur otherwise
-							while(buttonPressed() != 0);
+							if (currentFile == 1) {
+								ret = pf_lseek(audioFileInfo.dataOffset);
+								if (ret) {
+									break;
+								}
+								// wait until no button is pressed, as funny noises may occur otherwise
+								while(buttonPressed() != 0);
+							} else {
+								currentFile--;
+								ret = load(currentChannel * 100 + currentFile);
+								if (ret) {
+									break;
+								}
+								
+								// jump to almost end of file
+								ret = pf_lseek(fileSystem.fptr + audioFileInfo.numberOfSamples - (DWORD)RW_SPEED * 1024);
+								if (ret) {
+									break;
+								}
+							}
 						}
 					} else if (buttonValue == 11) {
 						// jump forward
 						if(samplesLeftToRead() > (DWORD)FF_SPEED * 1024) {
-							pf_lseek(fileSystem.fptr + (DWORD)FF_SPEED * 1024);
+							ret = pf_lseek(fileSystem.fptr + (DWORD)FF_SPEED * 1024);
+							if (ret) {
+								break;
+							}
 						} else {
 							// if current position is too close to the end of the file
 							currentFile++;
 							ret = load(currentChannel * 100 + currentFile);
+							if (ret) {
+								break;
+							}
 						}
 					} else if (buttonValue != 0) {
 						// if any other button
 						if (buttonValue == currentChannel) {
 							currentFile++;
 							ret = load(currentChannel * 100 + currentFile);
+							if (ret) {
+								break;
+							}
 						} else {
 							currentChannel = buttonValue;
 							currentFile = 1;
 							ret = load(currentChannel * 100 + currentFile);
+							if (ret) {
+								break;
+							}
 						}
 					}
-					buttonsDisabled = 50;
+					buttonsDisabled = AUDIO_CLUSTER_SIZE_RW_FF;
 				}
 			}
 			

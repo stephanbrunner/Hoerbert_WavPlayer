@@ -1005,8 +1005,27 @@ FRESULT pf_lseek (
 			ofs -= fs->fptr;
 			clst = fs->curr_clust;
 		} else {							/* When seek to back cluster, */
-			clst = fs->org_clust;			/* start from the first cluster */
-			fs->curr_clust = clst;
+			// try to follow cluster chain backwards (only possible if file is not fragmented)
+			while ((ofs - 1) / bcs < (ifptr - 1) / bcs ) {
+				if (get_fat(fs->curr_clust - 1) == fs->curr_clust) {
+					fs->curr_clust -= 1;
+					ifptr -= bcs;
+				} else {
+					break;
+				}
+			}
+			
+			// check if following back succeeded
+			if ((ofs - 1) / bcs >= (ifptr - 1) / bcs) {
+				// start from the current cluster
+				fs->fptr = (ifptr - 1) & ~(bcs - 1);	
+				ofs -= fs->fptr;
+				clst = fs->curr_clust;
+			} else {
+				// start from the first cluster
+				clst = fs->org_clust;			
+				fs->curr_clust = clst;
+			}
 		}
 		while (ofs > bcs) {				/* Cluster following loop */
 			clst = get_fat(clst);		/* Follow cluster chain */
