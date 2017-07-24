@@ -36,6 +36,8 @@ and use these values to program the fuse bits. */
 #define FF_RW_AUDIO_CLUSTER_SIZE 50 // The size of the Audio clusters hearable while rw/ff
 #define FF_RW_PUSH_DURATION 500 //ms
 #define SKIP_BACKWARDS_THRESHOLD 100 // size of threshold in kB
+#define NUMBER_OF_JUMPS_TO_SWITCH_TO_FAST_FF_RW 10 // after a couple of jumps while FF RW, the jump size increases, like it used to do with CD players
+#define FAST_FF_RW_FACTOR 10 // times faster after NUMBER_OF_JUMPS_TO_SWITCH_TO_FAST_FF_RW jumps
 
 // error codes
 #define INVALIDE_FILE 11
@@ -435,7 +437,8 @@ int main (void) {
 			// load file
 			PLAYER_MODE playerMode = PLAY_MODE;
 			BYTE ret = load(currentChannel * 100 + currentFile);
-			BYTE buttonsDisabled = 0; // to make jumps hearable when FF or RW
+			BYTE playFfRwAudioCluster = 0; // to make jumps hearable when FF or RW
+			int numberOfFfRwJumps = 0;
 			while (ret == 0) {
 				// update Buffer and handle end of file error and other errors
 				ret = updateAudioBuffer();
@@ -520,16 +523,25 @@ int main (void) {
 				// This if can't be written as an else, as buttonValue might have changend during last if
 				if (buttonValue == 0) {
 					playerMode = PLAY_MODE;
+					playFfRwAudioCluster = 0;
+					numberOfFfRwJumps = 0;
 				}
 				
 				// if RW or FF, jump position every FF_RW_AUDIO_CLUSTER_SIZE iteration
-				if (buttonsDisabled) {
-					buttonsDisabled--;
+				if (playFfRwAudioCluster) {
+					playFfRwAudioCluster--;
 				}
-				if (playerMode == RW_MODE && !buttonsDisabled) {
+				if (playerMode == RW_MODE && !playFfRwAudioCluster) {
+					numberOfFfRwJumps++;
+					DWORD jumpSize = 0;
+					if (numberOfFfRwJumps > NUMBER_OF_JUMPS_TO_SWITCH_TO_FAST_FF_RW) {
+						jumpSize = (DWORD)FAST_FF_RW_FACTOR * RW_SPEED * 1024;
+					} else {
+						jumpSize = (DWORD)RW_SPEED * 1024;
+					}
 					// jump backwards
-					if (fileSystem.fptr > (DWORD)RW_SPEED * 1024) {
-						ret = pf_lseek(fileSystem.fptr - (DWORD)RW_SPEED * 1024);
+					if (fileSystem.fptr > jumpSize) {
+						ret = pf_lseek(fileSystem.fptr - jumpSize);
 						if (ret) {
 							break;
 						}
@@ -549,17 +561,24 @@ int main (void) {
 							}
 							
 							// jump to almost end of file
-							ret = pf_lseek(fileSystem.fptr + audioFileInfo.numberOfSamples - (DWORD)RW_SPEED * 1024);
+							ret = pf_lseek(fileSystem.fptr + audioFileInfo.numberOfSamples - jumpSize);
 							if (ret) {
 								break;
 							}
 						}
 					}
-					buttonsDisabled = FF_RW_AUDIO_CLUSTER_SIZE;
-				} else if (playerMode == FF_MODE && !buttonsDisabled) {
+					playFfRwAudioCluster = FF_RW_AUDIO_CLUSTER_SIZE;
+				} else if (playerMode == FF_MODE && !playFfRwAudioCluster) {
+					numberOfFfRwJumps++;
+					DWORD jumpSize = 0;
+					if (numberOfFfRwJumps > NUMBER_OF_JUMPS_TO_SWITCH_TO_FAST_FF_RW) {
+						jumpSize = (DWORD)FAST_FF_RW_FACTOR * FF_SPEED * 1024; 
+					} else {
+						jumpSize = (DWORD)FF_SPEED * 1024;
+					}
 					// jump forward
-					if(samplesLeftToRead() > (DWORD)FF_SPEED * 1024) {
-						ret = pf_lseek(fileSystem.fptr + (DWORD)FF_SPEED * 1024);
+					if(samplesLeftToRead() > jumpSize) {
+						ret = pf_lseek(fileSystem.fptr + jumpSize);
 						if (ret) {
 							break;
 						}
@@ -570,7 +589,7 @@ int main (void) {
 							break;
 						}
 					}
-					buttonsDisabled = FF_RW_AUDIO_CLUSTER_SIZE;
+					playFfRwAudioCluster = FF_RW_AUDIO_CLUSTER_SIZE;
 				}
 			}
 			
