@@ -63,7 +63,7 @@ BYTE send_cmd (
 	BYTE n, res;
 
 
-	if (cmd & 0x80) {	/* ACMD<n> is the command sequense of CMD55-CMD<n> */
+	if (cmd & 0x80) {	/* ACMD<n> is the command sequence of CMD55-CMD<n> */
 		cmd &= 0x7F;
 		res = send_cmd(CMD55, 0);
 		if (res > 1) return res;
@@ -157,10 +157,10 @@ DSTATUS disk_initialize (void)
 /*-----------------------------------------------------------------------*/
 
 DRESULT disk_readp (
-	void *dest,		/* Pointer to the destination object to put data */
+	BYTE *dest,		/* Pointer to the destination object to put data */
 	DWORD lba,		/* Start sector number (LBA) */
-	WORD ofs,		/* Byte offset in the sector (0..511) */
-	WORD cnt		/* Byte count (1..512), b15:destination flag */
+	UINT ofs,		/* Byte offset in the sector (0..511) */
+	UINT cnt		/* Byte count (1..512), b15:destination flag */
 )
 {
 	DRESULT res;
@@ -189,3 +189,51 @@ DRESULT disk_readp (
 	return res;
 }
 
+
+/*-----------------------------------------------------------------------*/
+/* Write partial sector                                                  */
+/*-----------------------------------------------------------------------*/
+
+#if _USE_WRITE
+DRESULT disk_writep (
+const BYTE *buff,	/* Pointer to the bytes to be written (NULL:Initiate/Finalize sector write) */
+DWORD sa			/* Number of bytes to send, Sector number (LBA) or zero */
+)
+{
+// 	DRESULT res;
+// 	WORD bc;
+// 	static WORD wc;
+// 
+// 	res = RES_ERROR;
+// 
+// 	if (buff) {		/* Send data bytes */
+// 		bc = (WORD)sa;
+// 		while (bc && wc) {		/* Send data bytes to the card */
+// 			xmit_spi(*buff++);
+// 			wc--; bc--;
+// 		}
+// 		res = RES_OK;
+// 		} else {
+// 		if (sa) {	/* Initiate sector write process */
+// 			if (!(CardType & CT_BLOCK)) sa *= 512;	/* Convert to byte address if needed */
+// 			if (send_cmd(CMD24, sa) == 0) {			/* WRITE_SINGLE_BLOCK */
+// 				xmit_spi(0xFF); xmit_spi(0xFE);		/* Data block header */
+// 				wc = 512;							/* Set byte counter */
+// 				res = RES_OK;
+// 			}
+// 			} else {	/* Finalize sector write process */
+// 			bc = wc + 2;
+// 			while (bc--) xmit_spi(0);	/* Fill left bytes and CRC with zeros */
+// 			if ((rcv_spi() & 0x1F) == 0x05) {	/* Receive data resp and wait for end of write process in timeout of 500ms */
+// 				for (bc = 5000; rcv_spi() != 0xFF && bc; bc--) dly_100us();	/* Wait ready */
+// 				if (bc) res = RES_OK;
+// 			}
+// 			DESELECT();
+// 			rcv_spi();
+// 		}
+// 	}
+// 
+// 	return res;
+	return 0;
+}
+#endif

@@ -75,7 +75,7 @@ FATFS fileSystem;			/* File system object */
 DIR directory;			/* Directory object */
 FILINFO fileInfo;		/* File information */
 AUDIOFILE_INFO audioFileInfo;
-WORD rb;			/* Return value. Put this here to avoid avr-gcc's bug */ // TODO Maybe this is not a problem anymore? Remove?
+UINT rb;			/* Return value. Put this here to avoid avr-gcc's bug */ // TODO Maybe this is not a problem anymore? Remove?
 BYTE currentChannel = 0;
 BYTE currentFile = 0;
 

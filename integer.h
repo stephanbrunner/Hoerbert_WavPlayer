@@ -11,7 +11,6 @@
 #include <tchar.h>
 
 #else			/* Embedded platform */
-#pragma GCC diagnostic ignored "-Wstrict-aliasing"
 
 /* This type MUST be 8 bit */
 typedef unsigned char	BYTE;
