@@ -400,6 +400,43 @@ FRESULT skipToLast() {
 	}
 }
 
+BYTE storePosition() {
+	Buff[0] = currentChannel;
+	Buff[1] = currentFile;
+	FRESULT ret = pf_open("POSITION.DAT");
+	ret = pf_write(Buff, 2, &rb);
+	if (ret != 0 && rb != 2) {
+		return ret;
+	}
+	ret = pf_write(0, 0, &rb);
+	if (ret != 0) {
+		return ret;
+	}
+	return 0;
+}
+
+BYTE readAndUpdatePosition() {
+	FRESULT ret = pf_open("POSITION.DAT");
+	if (ret != 0) {
+		return ret;
+	}
+	ret = pf_read(Buff, 2, &rb);
+	if (ret != 0 || rb != 2) {
+		return ret;
+	}
+	currentChannel = Buff[0];
+	currentFile = Buff[1];
+	return 0;
+}
+
+void error(BYTE b) {
+	load(b);
+	FRESULT ret = updateAudioBuffer();
+	while (ret == 0) {
+		ret = updateAudioBuffer();
+	}
+}
+
 int main (void) {
 	initADC(); // initialize Analog input (control buttons)
 	
@@ -419,188 +456,209 @@ int main (void) {
 
 	while (1) {
 		if (pf_mount(&fileSystem) == FR_OK) {	/* Initialize FS */
+			// write a file
+			currentChannel = 1;
+			currentFile = 10;
+			
+			storePosition();
+			currentChannel = 0;
+			currentFile = 1;
+			readAndUpdatePosition();
+			
+			currentChannel = Buff[0];
+			currentFile = Buff[1];
+			load(currentChannel);
+			FRESULT ret = updateAudioBuffer();
+			while (ret == 0) {
+				ret = updateAudioBuffer();
+			}
+			load(currentFile);
+			ret = updateAudioBuffer();
+			while (ret == 0) {
+				ret = updateAudioBuffer();
+			}
 			
 			// wait for a button to be pressed
 			while (buttonPressed() == 0);
 			delay_ms(1); // the electronics around the button needs time to stabilize.
 			int buttonValue = buttonPressed();
-				
-			// wait for no button pressed
-			while (buttonPressed() != 0);
-			
-			// evaluate pressed button
-			if (buttonValue != 10 && buttonValue != 11) {
-				currentChannel = buttonValue;
-				currentFile = 1;
-			}
-				
-			// load file
-			PLAYER_MODE playerMode = PLAY_MODE;
-			BYTE ret = load(currentChannel * 100 + currentFile);
-			BYTE playFfRwAudioCluster = 0; // to make jumps hearable when FF or RW
-			int numberOfFfRwJumps = 0;
-			while (ret == 0) {
-				// update Buffer and handle end of file error and other errors
-				ret = updateAudioBuffer();
-				if (ret == END_OF_FILE) {
-					ret = skipToNext(currentChannel, currentFile);
-					if (ret) {
-						break;
-					}
-				} else if (ret) {
-					break;
-				}
-								
-				// poll buttons
-				BYTE buttonValue = buttonPressed();
-				if (buttonValue != 0) {
-					// debounce, as unsettled values were measured sometimes
-					delay_ms(1);
-					BYTE nextButtonValue = buttonPressed();
-					if(buttonValue != nextButtonValue) {
-						buttonValue = 0;
-					}
-									
-					// evaluate pressed button
-					if (buttonValue == 10 && playerMode == PLAY_MODE) {
-						for (int i = 0; i < FF_RW_PUSH_DURATION; i++) {
-							if (buttonPressed() == 0) {
-								// if button was released, react immediately, as for skipping, people might want to push short and fast
-								break;
-							}
-							delay_ms(1);
-						}
-						
-						// check if button is still pressed
-						if (buttonPressed() == 10) {
-							playerMode = RW_MODE;
-						} else {
-							// skip backwards or to the start of the file
-							if (fileSystem.fptr < (DWORD)SKIP_BACKWARDS_THRESHOLD * 1024) {
-								ret = skipToLast();
-								if (ret) {
-									break;
-								}
-							} else {
-								ret = load(currentChannel * 100 + currentFile);
-								if (ret) {
-									break;
-								}
-							}
-						}
-					} else if (buttonValue == 11 && playerMode == PLAY_MODE) {
-						delay_ms(FF_RW_PUSH_DURATION);
-						if (buttonPressed() == 11) {
-							playerMode = FF_MODE;
-						} else {
-							// skip forward
-							ret = skipToNext();
-							if (ret) {
-								break;
-							}
-						}
-					} else if (buttonValue != 0 && playerMode == PLAY_MODE) {
-						// if any other button
-						if (buttonValue == currentChannel) {
-							ret = skipToNext();
-							if (ret) {
-								break;
-							}
-						} else {
-							currentChannel = buttonValue;
-							currentFile = 1;
-							ret = load(currentChannel * 100 + currentFile);
-							if (ret) {
-								break;
-							}
-						}
-						
-						// wait until button is released
-						while (buttonPressed());
-					}
-				} 
-				
-				// This if can't be written as an else, as buttonValue might have changend during last if
-				if (buttonValue == 0) {
-					playerMode = PLAY_MODE;
-					playFfRwAudioCluster = 0;
-					numberOfFfRwJumps = 0;
-				}
-				
-				// if RW or FF, jump position every FF_RW_AUDIO_CLUSTER_SIZE iteration
-				if (playFfRwAudioCluster) {
-					playFfRwAudioCluster--;
-				}
-				if (playerMode == RW_MODE && !playFfRwAudioCluster) {
-					numberOfFfRwJumps++;
-					DWORD jumpSize = 0;
-					if (numberOfFfRwJumps > NUMBER_OF_JUMPS_TO_SWITCH_TO_FAST_FF_RW) {
-						jumpSize = (DWORD)FAST_FF_RW_FACTOR * RW_SPEED * 1024;
-					} else {
-						jumpSize = (DWORD)RW_SPEED * 1024;
-					}
-					// jump backwards
-					if (fileSystem.fptr > jumpSize) {
-						ret = pf_lseek(fileSystem.fptr - jumpSize);
-						if (ret) {
-							break;
-						}
-					} else {
-						// if current position is to close too the start of the file
-						if (currentFile == 1) {
-							ret = pf_lseek(audioFileInfo.dataOffset);
-							if (ret) {
-								break;
-							}
-							// wait until no button is pressed, as funny noises may occur otherwise
-							while(buttonPressed() != 0);
-						} else {
-							ret = skipToLast();
-							if (ret) {
-								break;
-							}
-							
+// 				
+// 			// wait for no button pressed
+// 			while (buttonPressed() != 0);
+// 			
+// 			// evaluate pressed button
+// 			if (buttonValue != 10 && buttonValue != 11) {
+// 				currentChannel = buttonValue;
+// 				currentFile = 1;
+// 			}
+// 				
+// 			// load file
+// 			PLAYER_MODE playerMode = PLAY_MODE;
+// 			BYTE ret = load(currentChannel * 100 + currentFile);
+// 			BYTE playFfRwAudioCluster = 0; // to make jumps hearable when FF or RW
+// 			int numberOfFfRwJumps = 0;
+// 			while (ret == 0) {
+// 				// update Buffer and handle end of file error and other errors
+// 				ret = updateAudioBuffer();
+// 				if (ret == END_OF_FILE) {
+// 					ret = skipToNext(currentChannel, currentFile);
+// 					if (ret) {
+// 						break;
+// 					}
+// 				} else if (ret) {
+// 					break;
+// 				}
+// 								
+// 				// poll buttons
+// 				BYTE buttonValue = buttonPressed();
+// 				if (buttonValue != 0) {
+// 					// debounce, as unsettled values were measured sometimes
+// 					delay_ms(1);
+// 					BYTE nextButtonValue = buttonPressed();
+// 					if(buttonValue != nextButtonValue) {
+// 						buttonValue = 0;
+// 					}
+// 									
+// 					// evaluate pressed button
+// 					if (buttonValue == 10 && playerMode == PLAY_MODE) {
+// 						for (int i = 0; i < FF_RW_PUSH_DURATION; i++) {
+// 							if (buttonPressed() == 0) {
+// 								// if button was released, react immediately, as for skipping, people might want to push short and fast
+// 								break;
+// 							}
+// 							delay_ms(1);
+// 						}
+// 						
+// 						// check if button is still pressed
+// 						if (buttonPressed() == 10) {
+// 							playerMode = RW_MODE;
+// 						} else {
+// 							// skip backwards or to the start of the file
+// 							if (fileSystem.fptr < (DWORD)SKIP_BACKWARDS_THRESHOLD * 1024) {
+// 								ret = skipToLast();
+// 								if (ret) {
+// 									break;
+// 								}
+// 							} else {
+// 								ret = load(currentChannel * 100 + currentFile);
+// 								if (ret) {
+// 									break;
+// 								}
+// 							}
+// 						}
+// 					} else if (buttonValue == 11 && playerMode == PLAY_MODE) {
+// 						delay_ms(FF_RW_PUSH_DURATION);
+// 						if (buttonPressed() == 11) {
+// 							playerMode = FF_MODE;
+// 						} else {
+// 							// skip forward
+// 							ret = skipToNext();
+// 							if (ret) {
+// 								break;
+// 							}
+// 						}
+// 					} else if (buttonValue != 0 && playerMode == PLAY_MODE) {
+// 						// if any other button
+// 						if (buttonValue == currentChannel) {
+// 							ret = skipToNext();
+// 							if (ret) {
+// 								break;
+// 							}
+// 						} else {
+// 							currentChannel = buttonValue;
+// 							currentFile = 1;
+// 							ret = load(currentChannel * 100 + currentFile);
+// 							if (ret) {
+// 								break;
+// 							}
+// 						}
+// 						
+// 						// wait until button is released
+// 						while (buttonPressed());
+// 					}
+// 				} 
+// 				
+// 				// This if can't be written as an else, as buttonValue might have changend during last if
+// 				if (buttonValue == 0) {
+// 					playerMode = PLAY_MODE;
+// 					playFfRwAudioCluster = 0;
+// 					numberOfFfRwJumps = 0;
+// 				}
+// 				
+// 				// if RW or FF, jump position every FF_RW_AUDIO_CLUSTER_SIZE iteration
+// 				if (playFfRwAudioCluster) {
+// 					playFfRwAudioCluster--;
+// 				}
+// 				if (playerMode == RW_MODE && !playFfRwAudioCluster) {
+// 					numberOfFfRwJumps++;
+// 					DWORD jumpSize = 0;
+// 					if (numberOfFfRwJumps > NUMBER_OF_JUMPS_TO_SWITCH_TO_FAST_FF_RW) {
+// 						jumpSize = (DWORD)FAST_FF_RW_FACTOR * RW_SPEED * 1024;
+// 					} else {
+// 						jumpSize = (DWORD)RW_SPEED * 1024;
+// 					}
+// 					// jump backwards
+// 					if (fileSystem.fptr > jumpSize) {
+// 						ret = pf_lseek(fileSystem.fptr - jumpSize);
+// 						if (ret) {
+// 							break;
+// 						}
+// 					} else {
+// 						// if current position is to close too the start of the file
+// 						if (currentFile == 1) {
+// 							ret = pf_lseek(audioFileInfo.dataOffset);
+// 							if (ret) {
+// 								break;
+// 							}
+// 							// wait until no button is pressed, as funny noises may occur otherwise
+// 							while(buttonPressed() != 0);
+// 						} else {
+// 							ret = skipToLast();
+// 							if (ret) {
+// 								break;
+// 							}
+// 							
 							// jump to almost end of file
-							ret = pf_lseek(fileSystem.fptr + audioFileInfo.numberOfSamples - jumpSize);
-							if (ret) {
-								break;
-							}
-						}
-					}
-					playFfRwAudioCluster = FF_RW_AUDIO_CLUSTER_SIZE;
-				} else if (playerMode == FF_MODE && !playFfRwAudioCluster) {
-					numberOfFfRwJumps++;
-					DWORD jumpSize = 0;
-					if (numberOfFfRwJumps > NUMBER_OF_JUMPS_TO_SWITCH_TO_FAST_FF_RW) {
-						jumpSize = (DWORD)FAST_FF_RW_FACTOR * FF_SPEED * 1024; 
-					} else {
-						jumpSize = (DWORD)FF_SPEED * 1024;
-					}
-					// jump forward
-					if(samplesLeftToRead() > jumpSize) {
-						ret = pf_lseek(fileSystem.fptr + jumpSize);
-						if (ret) {
-							break;
-						}
-					} else {
-						// if current position is too close to the end of the file
-						ret = skipToNext();
-						if (ret) {
-							break;
-						}
-					}
-					playFfRwAudioCluster = FF_RW_AUDIO_CLUSTER_SIZE;
-				}
-			}
-			
-			// for debugging. Make the error hearable
-			load(ret);
-			ret = updateAudioBuffer();
-			while (ret == 0) {		
-				ret = updateAudioBuffer();
-			}
-
-			audio_off();	/* Disable audio output */
+// 							ret = pf_lseek(fileSystem.fptr + audioFileInfo.numberOfSamples - jumpSize);
+// 							if (ret) {
+// 								break;
+// 							}
+// 						}
+// 					}
+// 					playFfRwAudioCluster = FF_RW_AUDIO_CLUSTER_SIZE;
+// 				} else if (playerMode == FF_MODE && !playFfRwAudioCluster) {
+// 					numberOfFfRwJumps++;
+// 					DWORD jumpSize = 0;
+// 					if (numberOfFfRwJumps > NUMBER_OF_JUMPS_TO_SWITCH_TO_FAST_FF_RW) {
+// 						jumpSize = (DWORD)FAST_FF_RW_FACTOR * FF_SPEED * 1024; 
+// 					} else {
+// 						jumpSize = (DWORD)FF_SPEED * 1024;
+// 					}
+// 					// jump forward
+// 					if(samplesLeftToRead() > jumpSize) {
+// 						ret = pf_lseek(fileSystem.fptr + jumpSize);
+// 						if (ret) {
+// 							break;
+// 						}
+// 					} else {
+// 						// if current position is too close to the end of the file
+// 						ret = skipToNext();
+// 						if (ret) {
+// 							break;
+// 						}
+// 					}
+// 					playFfRwAudioCluster = FF_RW_AUDIO_CLUSTER_SIZE;
+// 				}
+// 			}
+// 			
+// 			// for debugging. Make the error hearable
+// 			load(ret);
+// 			ret = updateAudioBuffer();
+// 			while (ret == 0) {		
+// 				ret = updateAudioBuffer();
+// 			}
+// 
+// 			audio_off();	/* Disable audio output */
 		}
 	}
 }
