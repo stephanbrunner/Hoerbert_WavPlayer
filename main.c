@@ -52,6 +52,23 @@ and use these values to program the fuse bits. */
 #define END_OF_FILE 20
 #define HIGHEST_ERROR_CODE 20
 
+// LED numbering
+#define TRACK_1_LED 6
+#define TRACK_2_LED 7
+#define TRACK_3_LED 8
+#define TRACK_4_LED 9
+#define TRACK_5_LED 10
+#define TRACK_6_LED 11
+#define TRACK_7_LED 12
+#define TRACK_8_LED 13
+#define RW_LED 14
+#define FF_LED 15
+
+// pinning
+#define LED_DATA PA3
+#define LED_CLK PA2
+#define LED_LE PA1
+
 // structs and enums
 typedef struct {
 	unsigned long numberOfSamples;
@@ -78,6 +95,7 @@ AUDIOFILE_INFO audioFileInfo;
 UINT rb;			/* Return value. Put this here to avoid avr-gcc's bug */ // TODO Maybe this is not a problem anymore? Remove?
 unsigned char currentChannel = 0;
 unsigned char currentFile = 0;
+uint16_t ledStates = 0;
 
  
 // Initializes the analog in needed for reading the button:
@@ -474,6 +492,73 @@ static FRESULT skipToLast() {
 	}
 }
 
+void showLED() {
+	for (int i = 0; i < 16; i++) {
+		if ((1 << i) & ledStates) {
+			PORTA |= (1 << LED_DATA);
+			} else {
+			PORTA &= ~(1 << LED_DATA);
+		}
+		PORTA |= (1 << LED_CLK);
+		PORTA &= ~(1 << LED_CLK);
+	}
+	PORTA |= (1 << LED_LE);
+	PORTA &= ~(1 << LED_LE);
+}
+
+void lightLEDs(uint16_t states) {
+	ledStates = states;
+	showLED();
+}
+
+void lightLED(uint8_t n, uint8_t on) {
+	if (on) {
+		ledStates |= (1 << n);
+	} else {
+		ledStates &= ~(1 << n);
+	}
+}
+
+void ledStartupSequence() {
+	// falling bar
+	for (int i = 0; i < 5; i++){
+		lightLED(i * 2 + TRACK_1_LED - 2, 0);
+		lightLED(i * 2 + TRACK_1_LED - 1, 0);
+		lightLED(i * 2 + TRACK_1_LED, 1);
+		lightLED(i * 2 + TRACK_1_LED + 1, 1);
+		showLED();
+		delay_ms(100);
+	}
+	
+	// rising bar
+	for (int i = 0; i < 5; i++){
+		lightLED(FF_LED - i * 2 + 2, 0);
+		lightLED(FF_LED - i * 2 + 1, 0);
+		lightLED(FF_LED - i * 2, 1);
+		lightLED(FF_LED - i * 2 - 1, 1);
+		showLED();
+		delay_ms(100);
+	}
+	
+	//// doubleblink all
+	//for (int i = 0; i < 2; i++) {
+		//lightLEDs(0xFFFF);
+		//showLED();
+		//delay_ms(100);
+		//lightLEDs(0x0000);
+		//showLED();
+		//delay_ms(100);
+	//}
+		
+	// light all play buttons sequncely line wise
+	for(int i = 0; i < 4; i++) {
+		lightLED(2 * i + TRACK_1_LED, 1);
+		lightLED(2 * i + TRACK_1_LED + 1, 1);
+		showLED();
+		delay_ms(100);
+	}
+}
+
 int main (void) {
 	initADC(); // initialize Analog input (control buttons)
 	
@@ -484,13 +569,16 @@ int main (void) {
 	PCMSK1 = 0b01110000;
 
 	/* Initialize ports */
-	PORTA = 0b01111110;		/* PORTA [-ppppppL]*/
-	DDRA  = 0b00000001;
+	PORTA = 0b00000000;		/* PORTA [-LLLLLLL]*/
+	DDRA  = 0b01111111;
 	PORTB = 0b01110001;		/* PORTB [-pHHLLLp] */
 	DDRB  = 0b00111110;
 
 	sei();
-
+	
+	// LED test
+	ledStartupSequence();
+	
 	while (1) {
 		if (pf_mount(&fileSystem) == FR_OK) {	/* Initialize FS */
 			// check if a position is stored in position file
