@@ -38,6 +38,9 @@ and use these values to program the fuse bits. */
 #define SKIP_BACKWARDS_THRESHOLD 100 // size of threshold in kB
 #define NUMBER_OF_JUMPS_TO_SWITCH_TO_FAST_FF_RW 10 // after a couple of jumps while FF RW, the jump size increases, like it used to do with CD players
 #define FAST_FF_RW_FACTOR 10 // times faster after NUMBER_OF_JUMPS_TO_SWITCH_TO_FAST_FF_RW jumps
+#define PLAY_BLINK_DURATION 200 // loop cycles
+#define SWITCH_TO_IDLE_DURATION 60000 // ms
+#define IDLE_EFFECT_FREQUENCE 4000 // ms
 
 // error codes
 #define INVALIDE_FILE 11
@@ -53,16 +56,16 @@ and use these values to program the fuse bits. */
 #define HIGHEST_ERROR_CODE 20
 
 // LED numbering
-#define TRACK_1_LED 6
-#define TRACK_2_LED 7
-#define TRACK_3_LED 8
-#define TRACK_4_LED 9
-#define TRACK_5_LED 10
-#define TRACK_6_LED 11
-#define TRACK_7_LED 12
-#define TRACK_8_LED 13
-#define RW_LED 14
-#define FF_LED 15
+#define TRACK_1_LED 0
+#define TRACK_2_LED 1
+#define TRACK_3_LED 2
+#define TRACK_4_LED 3
+#define TRACK_5_LED 4
+#define TRACK_6_LED 5
+#define TRACK_7_LED 6
+#define TRACK_8_LED 7
+#define RW_LED 8
+#define FF_LED 9
 
 // pinning
 #define LED_DATA PA3
@@ -404,14 +407,6 @@ static unsigned char updateAudioBuffer() {
 	}
 }
 
-void error(BYTE b) {
-	load(b);
-	FRESULT ret = updateAudioBuffer();
-	while (ret == 0) {
-		ret = updateAudioBuffer();
-	}
-}
-
 static unsigned char storePosition() {
 	unsigned char writeBuffer[2];
 	writeBuffer[0] = currentChannel;
@@ -494,7 +489,7 @@ static FRESULT skipToLast() {
 
 void showLED() {
 	for (int i = 0; i < 16; i++) {
-		if ((1 << i) & ledStates) {
+		if ((0x8000 >> i) & ledStates) {
 			PORTA |= (1 << LED_DATA);
 			} else {
 			PORTA &= ~(1 << LED_DATA);
@@ -519,44 +514,130 @@ void lightLED(uint8_t n, uint8_t on) {
 	}
 }
 
+void error(BYTE b) {
+	lightLEDs(0);
+	for (int i = 0; i < 5; i++) {
+		lightLED(FF_LED, 0);
+		lightLED(RW_LED, 1);
+		showLED();
+		delay_ms(500);
+		lightLED(FF_LED, 1);
+		lightLED(RW_LED, 0);
+		showLED();
+		delay_ms(500);
+	}
+	lightLEDs(b);
+	showLED();
+	delay_ms(1000);
+}
+
+void blink(uint16_t led) {
+	for (int i = 0; i < 2; i++) {
+		lightLED(led, 1);
+		showLED();
+		delay_ms(100);
+		lightLED(led, 0);
+		showLED();
+		delay_ms(100);
+	}
+}
+
+void blinkRwFf() {
+	for (int i = 0; i < 2; i++) {
+		lightLED(FF_LED, 1);
+		lightLED(RW_LED, 1);
+		showLED();
+		delay_ms(100);
+		lightLED(FF_LED, 0);
+		lightLED(RW_LED, 0);
+		showLED();
+		delay_ms(100);
+	}
+}
+
+void toggleRwFf() {
+	ledStates ^= 1 << FF_LED;
+	ledStates ^= 1 << RW_LED;
+	showLED();
+}
+
 void ledStartupSequence() {
-	// falling bar
-	for (int i = 0; i < 5; i++){
-		lightLED(i * 2 + TRACK_1_LED - 2, 0);
-		lightLED(i * 2 + TRACK_1_LED - 1, 0);
-		lightLED(i * 2 + TRACK_1_LED, 1);
-		lightLED(i * 2 + TRACK_1_LED + 1, 1);
+	// spinning wheel
+	for (int i = 0; i < 6; i++) {
+		lightLED(TRACK_6_LED, 0);
+		lightLED(TRACK_5_LED, 1);
 		showLED();
-		delay_ms(100);
+		delay_ms(200);
+		lightLED(TRACK_5_LED, 0);
+		lightLED(TRACK_3_LED, 1);
+		showLED();
+		delay_ms(200);
+		lightLED(TRACK_3_LED, 0);
+		lightLED(TRACK_4_LED, 1);
+		showLED();
+		delay_ms(200);
+		lightLED(TRACK_4_LED, 0);
+		lightLED(TRACK_6_LED, 1);
+		showLED();
+		delay_ms(200);
 	}
 	
-	// rising bar
-	for (int i = 0; i < 5; i++){
-		lightLED(FF_LED - i * 2 + 2, 0);
-		lightLED(FF_LED - i * 2 + 1, 0);
-		lightLED(FF_LED - i * 2, 1);
-		lightLED(FF_LED - i * 2 - 1, 1);
-		showLED();
-		delay_ms(100);
-	}
-	
-	//// doubleblink all
-	//for (int i = 0; i < 2; i++) {
-		//lightLEDs(0xFFFF);
-		//showLED();
-		//delay_ms(100);
-		//lightLEDs(0x0000);
-		//showLED();
-		//delay_ms(100);
-	//}
+	// transition
+	lightLED(TRACK_6_LED, 0);
+	lightLED(TRACK_8_LED, 1);
+	showLED();
+	delay_ms(100);
+	lightLED(TRACK_8_LED, 0);
+	lightLED(FF_LED, 1);
+	showLED();
+	delay_ms(100);	
+}
+
+void kittSequence() {
+		// rising bar
+		for (int i = 0; i < 5; i++){
+			lightLED(FF_LED - i * 2 + 2, 0);
+			lightLED(FF_LED - i * 2 + 1, 0);
+			lightLED(FF_LED - i * 2, 1);
+			lightLED(FF_LED - i * 2 - 1, 1);
+			showLED();
+			delay_ms(100);
+		}
 		
-	// light all play buttons sequncely line wise
-	for(int i = 0; i < 4; i++) {
-		lightLED(2 * i + TRACK_1_LED, 1);
-		lightLED(2 * i + TRACK_1_LED + 1, 1);
+		// falling bar
+		for (int i = 0; i < 5; i++){
+			lightLED(i * 2 + TRACK_1_LED - 2, 0);
+			lightLED(i * 2 + TRACK_1_LED - 1, 0);
+			lightLED(i * 2 + TRACK_1_LED, 1);
+			lightLED(i * 2 + TRACK_1_LED + 1, 1);
+			showLED();
+			delay_ms(100);
+		}
+}
+
+void doublBlinkPlayButtons() {
+		// doubleblink all but last line
+		for (int i = 0; i < 2; i++) {
+			lightLEDs(0x0000);
+			showLED();
+			delay_ms(100);
+			lightLEDs(0b0000000011111111);
+			showLED();
+			delay_ms(100);
+		}
+}
+void ledSequence() {
+	kittSequence();
+	
+	// light all lines sequncely line wise, bottom to top
+	for(int i = 0; i < 5; i++) {
+		lightLED(FF_LED - 2 * i, 1);
+		lightLED(FF_LED - 2 * i - 1, 1);
 		showLED();
 		delay_ms(100);
 	}
+	
+	doublBlinkPlayButtons();
 }
 
 int main (void) {
@@ -578,9 +659,12 @@ int main (void) {
 	
 	// LED test
 	ledStartupSequence();
-	
+		
 	while (1) {
 		if (pf_mount(&fileSystem) == FR_OK) {	/* Initialize FS */
+			lightLEDs(0);
+			ledSequence();
+			
 			// check if a position is stored in position file
 			unsigned char ret = readAndUpdatePosition();
 			if (ret != 0) {
@@ -590,9 +674,29 @@ int main (void) {
 			// if no position is defined yet, wait for a button to be pressed
 			if (currentFile == 0) {
 				// wait for a button to be pressed
-				while (buttonPressed() == 0);
+				uint16_t idleCounter = SWITCH_TO_IDLE_DURATION;
+				uint16_t effectCounter = 0;
+				while (buttonPressed() == 0) {
+					if (idleCounter) {
+						idleCounter--;
+					} else {
+						if (effectCounter > IDLE_EFFECT_FREQUENCE) {
+							effectCounter = 0;
+							doublBlinkPlayButtons();
+						} else {
+							effectCounter++;
+							lightLEDs(0);
+							showLED();	
+						}
+					}
+					delay_ms(1);
+				}
 				delay_ms(1); // the electronics around the button needs time to stabilize.
 				unsigned char buttonValue = buttonPressed();
+				
+				// clear leds
+				lightLEDs(0);
+				showLED();
 				
 				// wait for no button pressed
 				while (buttonPressed() != 0);
@@ -602,22 +706,45 @@ int main (void) {
 					currentChannel = buttonValue;
 					currentFile = 1;
 				}
-			}		
-				
+			}
+			
+								
+			// light navigation buttons
+			lightLEDs(0);
+			lightLED(FF_LED, 1);
+			lightLED(RW_LED, 1);
+								
+			// blink corresponding LED
+			blink(currentChannel - 1);
+								
 			// load file
 			PLAYER_MODE playerMode = PLAY_MODE;
 			ret = loadCurrentFile();
 			unsigned char playFfRwAudioCluster = 0; // to make jumps hearable when FF or RW
 			unsigned char numberOfFfRwJumps = 0;
+			uint16_t playBlinkCounter = 0;
 			while (ret == 0) {
+				// blink if necessary
+				if (playerMode == PLAY_MODE && playBlinkCounter > PLAY_BLINK_DURATION) {
+					playBlinkCounter = 0;
+					blink(currentChannel - 1 );
+				} else if (playerMode == PLAY_MODE) {
+					playBlinkCounter++;
+				}
+				
 				// update Buffer and handle end of file error and other errors
 				ret = updateAudioBuffer();
 				if (ret == END_OF_FILE) {
 					ret = skipToNext(currentChannel, currentFile);
+					// quit routine if playlist is finished
 					if (ret) {
 						break;
+					} else {
+						blinkRwFf();
+						playBlinkCounter = 0;
 					}
 				} else if (ret) {
+					error(ret);
 					break;
 				}
 								
@@ -644,43 +771,60 @@ int main (void) {
 						// check if button is still pressed
 						if (buttonPressed() == 10) {
 							playerMode = RW_MODE;
+							lightLED(currentChannel - 1, 1);
+							showLED();
 						} else {
 							// skip backwards or to the start of the file
 							if (fileSystem.fptr < (unsigned long)SKIP_BACKWARDS_THRESHOLD * 1024) {
 								ret = skipToLast();
 								if (ret) {
+									error(ret);
 									break;
 								}
 							} else {
 								ret = loadCurrentFile();
 								if (ret) {
+									error(ret);
 									break;
 								}
 							}
+							blinkRwFf();
+							playBlinkCounter = 0;
 						}
 					} else if (buttonValue == 11 && playerMode == PLAY_MODE) {
 						delay_ms(FF_RW_PUSH_DURATION);
 						if (buttonPressed() == 11) {
 							playerMode = FF_MODE;
+							lightLED(currentChannel - 1, 1);
+							showLED();
 						} else {
 							// skip forward
 							ret = skipToNext();
 							if (ret) {
+								error(ret);
 								break;
 							}
+							blinkRwFf();
+							playBlinkCounter = 0;
 						}
 					} else if (buttonValue != 0 && playerMode == PLAY_MODE) {
 						// if any other button
 						if (buttonValue == currentChannel) {
 							ret = skipToNext();
+							blinkRwFf();
+							playBlinkCounter = 0;
 							if (ret) {
+								error(ret);
 								break;
 							}
 						} else {
 							currentChannel = buttonValue;
 							currentFile = 1;
 							ret = loadCurrentFile();
+							blink(currentChannel - 1);
+							playBlinkCounter = 0;
 							if (ret) {
+								error(ret);
 								break;
 							}
 						}
@@ -690,11 +834,15 @@ int main (void) {
 					}
 				} 
 				
-				// This if can't be written as an else, as buttonValue might have changend during last if
+				// This part can't be written as an else, as buttonValue might have changed during last if
 				if (buttonValue == 0) {
 					playerMode = PLAY_MODE;
 					playFfRwAudioCluster = 0;
 					numberOfFfRwJumps = 0;
+					
+					// light navigation buttons
+					lightLED(FF_LED, 1);
+					lightLED(RW_LED, 1);
 				}
 				
 				// if RW or FF, jump position every FF_RW_AUDIO_CLUSTER_SIZE iteration
@@ -702,6 +850,7 @@ int main (void) {
 					playFfRwAudioCluster--;
 				}
 				if (playerMode == RW_MODE && !playFfRwAudioCluster) {
+					toggleRwFf();
 					unsigned long jumpSize = 0;
 					if (numberOfFfRwJumps > NUMBER_OF_JUMPS_TO_SWITCH_TO_FAST_FF_RW) {
 						jumpSize = (unsigned long)FAST_FF_RW_FACTOR * RW_SPEED * 1024;
@@ -713,6 +862,7 @@ int main (void) {
 					if (fileSystem.fptr > jumpSize) {
 						ret = pf_lseek(fileSystem.fptr - jumpSize);
 						if (ret) {
+							error(ret);
 							break;
 						}
 					} else {
@@ -720,6 +870,7 @@ int main (void) {
  						if (currentFile == 1) {
 							ret = pf_lseek(audioFileInfo.dataOffset);
 							if (ret) {
+								error(ret);
 								break;
 							}
 							// wait until no button is pressed, as funny noises may occur otherwise
@@ -727,18 +878,21 @@ int main (void) {
 						} else {
 							ret = skipToLast();
 							if (ret) {
+								error(ret);
 								break;
 							}
 							
 							// jump to almost end of file
  							ret = pf_lseek(fileSystem.fptr + audioFileInfo.numberOfSamples - jumpSize);
 							if (ret) {
+								error(ret);
 								break;
 							}
 						}
 					}
 					playFfRwAudioCluster = FF_RW_AUDIO_CLUSTER_SIZE;
 				} else if (playerMode == FF_MODE && !playFfRwAudioCluster) {
+					toggleRwFf();
 					unsigned long jumpSize = 0;
 					if (numberOfFfRwJumps > NUMBER_OF_JUMPS_TO_SWITCH_TO_FAST_FF_RW) {
 						jumpSize = (unsigned long)FAST_FF_RW_FACTOR * FF_SPEED * 1024; 
@@ -750,24 +904,19 @@ int main (void) {
 					if(samplesLeftToRead() > jumpSize) {
 						ret = pf_lseek(fileSystem.fptr + jumpSize);
 						if (ret) {
+							error(ret);
 							break;
 						}
 					} else {
 						// if current position is too close to the end of the file
 						ret = skipToNext();
+						// quit if playlist is finished
 						if (ret) {
 							break;
 						}
 					}
 					playFfRwAudioCluster = FF_RW_AUDIO_CLUSTER_SIZE;
 				}
-			}
-			
-			// for debugging. Make the error hearable
-			load(ret);
-			ret = updateAudioBuffer();
-			while (ret == 0) {		
-				ret = updateAudioBuffer();
 			}
 
 			audio_off();	/* Disable audio output */
