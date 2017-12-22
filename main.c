@@ -870,6 +870,12 @@ int main (void) {
 					playerMode = PLAY_MODE;
 					playFfRwAudioCluster = 0;
 					numberOfFfRwJumps = 0;
+					// after using toggleRwFf(), one of the LEDs might still be on
+					if ((1 << FF_LED & ledStates) || (1 << RW_LED & ledStates)) {
+						lightLED(FF_LED, 0);
+						lightLED(RW_LED, 0);
+						showLED();
+					}
 				}
 				
 				// if RW or FF, jump position every FF_RW_AUDIO_CLUSTER_SIZE iteration
