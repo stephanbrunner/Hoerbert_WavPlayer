@@ -35,13 +35,14 @@ and use these values to program the fuse bits. */
 #define RW_SPEED 200 // size of jump in kB
 #define FF_RW_AUDIO_CLUSTER_SIZE 50 // The size (in kB) of the Audio clusters hearable while rw/ff
 #define FF_RW_FAST_AUDIO_CLUSTER_SIZE 10 // The size (in kB) of the Audio clusters hearable while fast rw/ff
-#define FF_RW_PUSH_DURATION 300 //ms
-#define SKIP_DOUBLECLICK_DELAY 300 // ms
+#define FF_RW_PUSH_DURATION 200 //ms
+#define SKIP_DOUBLECLICK_DELAY 200 // ms
 #define SKIP_BACKWARDS_THRESHOLD 100 // size of threshold in kB
-#define NUMBER_OF_JUMPS_TO_SWITCH_TO_FAST_FF_RW 10 // after a couple of jumps while FF RW, the jump size increases, like it used to do with CD players
+#define NUMBER_OF_JUMPS_TO_SWITCH_TO_FAST_FF_RW 5 // after a couple of jumps while FF RW, the jump size increases, like it used to do with CD players
 #define FAST_FF_RW_FACTOR 5 // times faster after NUMBER_OF_JUMPS_TO_SWITCH_TO_FAST_FF_RW jumps
 #define SWITCH_TO_IDLE_DURATION 60000 // ms
 #define IDLE_EFFECT_FREQUENCE 4000 // ms
+#define BLINK_SPEED 70 // ms
 
 // error codes
 #define INVALIDE_FILE 11
@@ -536,10 +537,10 @@ void blink(uint16_t led) {
 	for (int i = 0; i < 2; i++) {
 		lightLED(led, 1);
 		showLED();
-		delay_ms(100);
+		delay_ms(BLINK_SPEED);
 		lightLED(led, 0);
 		showLED();
-		delay_ms(100);
+		delay_ms(BLINK_SPEED);
 	}
 }
 
@@ -548,11 +549,11 @@ void blinkFfRw() {
 		lightLED(FF_LED, 1);
 		lightLED(RW_LED, 1);
 		showLED();
-		delay_ms(100);
+		delay_ms(BLINK_SPEED);
 		lightLED(FF_LED, 0);
 		lightLED(RW_LED, 0);
 		showLED();
-		delay_ms(100);
+		delay_ms(BLINK_SPEED);
 	}
 	lightLED(currentChannel - 1, 1);
 	showLED();
@@ -567,7 +568,7 @@ void blinkSkipFf() {
 	lightLED(TRACK_5_LED, 1);
 	lightLED(TRACK_7_LED, 1);
 	showLED();
-	delay_ms(200);
+	delay_ms(BLINK_SPEED * 2);
 	lightLED(FF_LED, 1);
 	lightLED(RW_LED, 0);
 	lightLED(TRACK_1_LED, 0);
@@ -579,7 +580,7 @@ void blinkSkipFf() {
 	lightLED(TRACK_6_LED, 1);
 	lightLED(TRACK_8_LED, 1);
 	showLED();
-	delay_ms(200);
+	delay_ms(BLINK_SPEED * 2);
 	
 	lightLEDs(0);
 	lightLED(currentChannel - 1, 1);
@@ -595,7 +596,7 @@ void blinkSkipRw() {
 	lightLED(TRACK_6_LED, 1);
 	lightLED(TRACK_8_LED, 1);
 	showLED();
-	delay_ms(200);
+	delay_ms(BLINK_SPEED * 2);
 	lightLED(FF_LED, 0);
 	lightLED(RW_LED, 1);
 	lightLED(TRACK_2_LED, 0);
@@ -607,7 +608,7 @@ void blinkSkipRw() {
 	lightLED(TRACK_5_LED, 1);
 	lightLED(TRACK_7_LED, 1);
 	showLED();
-	delay_ms(200);
+	delay_ms(BLINK_SPEED * 2);
 	
 	lightLEDs(0);
 	lightLED(currentChannel - 1, 1);
@@ -628,7 +629,7 @@ void kittSequence() {
 			lightLED(FF_LED - i * 2, 1);
 			lightLED(FF_LED - i * 2 - 1, 1);
 			showLED();
-			delay_ms(100);
+			delay_ms(BLINK_SPEED);
 		}
 		
 		// falling bar
@@ -638,7 +639,7 @@ void kittSequence() {
 			lightLED(i * 2 + TRACK_1_LED, 1);
 			lightLED(i * 2 + TRACK_1_LED + 1, 1);
 			showLED();
-			delay_ms(100);
+			delay_ms(BLINK_SPEED);
 		}
 }
 
@@ -647,12 +648,13 @@ void doublBlinkPlayButtons() {
 		for (int i = 0; i < 2; i++) {
 			lightLEDs(0x0000);
 			showLED();
-			delay_ms(100);
+			delay_ms(BLINK_SPEED);
 			lightLEDs(0b0000000011111111);
 			showLED();
-			delay_ms(100);
+			delay_ms(BLINK_SPEED);
 		}
 }
+
 void ledSequence() {
 	kittSequence();
 	
@@ -661,7 +663,7 @@ void ledSequence() {
 		lightLED(FF_LED - 2 * i, 1);
 		lightLED(FF_LED - 2 * i - 1, 1);
 		showLED();
-		delay_ms(100);
+		delay_ms(BLINK_SPEED);
 	}
 	
 	doublBlinkPlayButtons();
@@ -799,16 +801,15 @@ int main (void) {
 							// evaluate and execute "skip to last" or "replay current file"
 							// skip backwards or to the start of the file
 							if (currentFile > 1 && (skip || fileSystem.fptr < (unsigned long)SKIP_BACKWARDS_THRESHOLD * 1024)) {
-								ret = skipToLast();
 								blinkSkipRw();
-								
+								ret = skipToLast();
 								if (ret) {
 									error(ret);
 									break;
 								}
 							} else {
-								ret = loadCurrentFile();
 								blinkFfRw();
+								ret= loadCurrentFile();
 								if (ret) {
 									error(ret);
 									break;
@@ -831,18 +832,18 @@ int main (void) {
 							showLED();
 						} else {
 							// skip forward
-							ret = skipToNext();
+							blinkSkipFf();
+								ret = skipToNext();
 							if (ret) {
 								error(ret);
 								break;
 							}
-							blinkSkipFf();
 						}
 					} else if (buttonValue != 0 && playerMode == PLAY_MODE) {
 						// if any other button
 						if (buttonValue == currentChannel) {
-							ret = skipToNext();
 							blinkSkipFf();
+							ret = skipToNext();
 							if (ret) {
 								error(ret);
 								break;
@@ -850,10 +851,10 @@ int main (void) {
 						} else {
 							currentChannel = buttonValue;
 							currentFile = 1;
-							ret = loadCurrentFile();
 							lightLEDs(0);
 							lightLED(currentChannel - 1, 1);
-							showLED();
+							showLED();							
+							ret = loadCurrentFile();
 							if (ret) {
 								error(ret);
 								break;
