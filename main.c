@@ -36,7 +36,7 @@ and use these values to program the fuse bits. */
 #define FF_RW_AUDIO_CLUSTER_SIZE 50 // The size (in kB) of the Audio clusters hearable while rw/ff
 #define FF_RW_FAST_AUDIO_CLUSTER_SIZE 10 // The size (in kB) of the Audio clusters hearable while fast rw/ff
 #define FF_RW_PUSH_DURATION 200 //ms
-#define SKIP_DOUBLECLICK_DELAY 200 // ms
+#define DOUBLECLICK_DELAY 300 // ms
 #define SKIP_BACKWARDS_THRESHOLD 100 // size of threshold in kB
 #define NUMBER_OF_JUMPS_TO_SWITCH_TO_FAST_FF_RW 5 // after a couple of jumps while FF RW, the jump size increases, like it used to do with CD players
 #define FAST_FF_RW_FACTOR 5 // times faster after NUMBER_OF_JUMPS_TO_SWITCH_TO_FAST_FF_RW jumps
@@ -475,18 +475,27 @@ static unsigned int loadCurrentFile() {
 	return 0;
 }
 
-static FRESULT skipToNext() {
-	currentFile++;
+static FRESULT skip(uint8_t amount) {
+	currentFile += amount;
 	return loadCurrentFile();
 }
 
-static FRESULT skipToLast() {
-	if (currentFile > 1) {
-		currentFile--;
+static FRESULT skipToNext() {
+	return skip(1);
+}
+
+static FRESULT skipBackwards(uint8_t amount) {
+	if (currentFile > amount) {
+		currentFile -= amount;
 		return loadCurrentFile();
 	} else {
-		return 0;
+		currentFile = 1;
+		return loadCurrentFile();
 	}
+}
+
+static FRESULT skipToLast() {
+	return skipBackwards(1);
 }
 
 void showLED() {
@@ -516,23 +525,6 @@ void lightLED(uint8_t n, uint8_t on) {
 	}
 }
 
-void error(BYTE b) {
-	lightLEDs(0);
-	for (int i = 0; i < 5; i++) {
-		lightLED(FF_LED, 0);
-		lightLED(RW_LED, 1);
-		showLED();
-		delay_ms(500);
-		lightLED(FF_LED, 1);
-		lightLED(RW_LED, 0);
-		showLED();
-		delay_ms(500);
-	}
-	lightLEDs(b);
-	showLED();
-	delay_ms(1000);
-}
-
 void blink(uint16_t led) {
 	for (int i = 0; i < 2; i++) {
 		lightLED(led, 1);
@@ -559,26 +551,27 @@ void blinkFfRw() {
 	showLED();
 }
 
-void blinkSkipFf() {
+void blinkSkipFfRw(uint8_t ff) {
+	uint8_t leftColumn[] = {RW_LED, TRACK_1_LED, TRACK_3_LED, TRACK_5_LED, TRACK_7_LED};
+	uint8_t rightColumn[] = {FF_LED, TRACK_2_LED, TRACK_4_LED, TRACK_6_LED, TRACK_8_LED};
 	lightLEDs(0);
-	lightLED(FF_LED, 0);
-	lightLED(RW_LED, 1);
-	lightLED(TRACK_1_LED, 1);
-	lightLED(TRACK_3_LED, 1);
-	lightLED(TRACK_5_LED, 1);
-	lightLED(TRACK_7_LED, 1);
+	for (int i = 0; i < 5; i++) {
+		if (ff) {
+			lightLED(leftColumn[i], 1);	
+		} else {
+			lightLED(rightColumn[i], 1);
+		}
+	}
 	showLED();
 	delay_ms(BLINK_SPEED * 2);
-	lightLED(FF_LED, 1);
-	lightLED(RW_LED, 0);
-	lightLED(TRACK_1_LED, 0);
-	lightLED(TRACK_3_LED, 0);
-	lightLED(TRACK_5_LED, 0);
-	lightLED(TRACK_7_LED, 0);
-	lightLED(TRACK_2_LED, 1);
-	lightLED(TRACK_4_LED, 1);
-	lightLED(TRACK_6_LED, 1);
-	lightLED(TRACK_8_LED, 1);
+	lightLEDs(0);
+	for (int i = 0; i < 5; i++) {
+		if (ff) {
+			lightLED(rightColumn[i], 1);
+		} else {
+			lightLED(leftColumn[i], 1);
+		}
+	}
 	showLED();
 	delay_ms(BLINK_SPEED * 2);
 	
@@ -587,32 +580,12 @@ void blinkSkipFf() {
 	showLED();
 }
 
+void blinkSkipFf() {
+	blinkSkipFfRw(1);
+}
+
 void blinkSkipRw() {
-	lightLEDs(0);
-	lightLED(FF_LED, 1);
-	lightLED(RW_LED, 0);
-	lightLED(TRACK_2_LED, 1);
-	lightLED(TRACK_4_LED, 1);
-	lightLED(TRACK_6_LED, 1);
-	lightLED(TRACK_8_LED, 1);
-	showLED();
-	delay_ms(BLINK_SPEED * 2);
-	lightLED(FF_LED, 0);
-	lightLED(RW_LED, 1);
-	lightLED(TRACK_2_LED, 0);
-	lightLED(TRACK_4_LED, 0);
-	lightLED(TRACK_6_LED, 0);
-	lightLED(TRACK_8_LED, 0);
-	lightLED(TRACK_1_LED, 1);
-	lightLED(TRACK_3_LED, 1);
-	lightLED(TRACK_5_LED, 1);
-	lightLED(TRACK_7_LED, 1);
-	showLED();
-	delay_ms(BLINK_SPEED * 2);
-	
-	lightLEDs(0);
-	lightLED(currentChannel - 1, 1);
-	showLED();
+	blinkSkipFfRw(0);
 }
 
 void toggleRwFf() {
@@ -669,6 +642,27 @@ void ledSequence() {
 	doublBlinkPlayButtons();
 }
 
+uint8_t multiClick(uint8_t button) {
+	uint8_t amount = 1;
+	uint8_t buttonPushed = 1;
+	for (int i = 0; i < DOUBLECLICK_DELAY; i++) {
+		if (buttonPushed) {
+			if (buttonPressed() == 0) {
+				buttonPushed = 0;
+			}
+			} else {
+			if (buttonPressed() == button) {
+				amount++;
+				buttonPushed = 1;
+				// TODO make that unhackyish
+				i = 0; // hackyish indeed
+			}
+		}
+		delay_ms(1);
+	}
+	return amount;
+}
+
 int main (void) {
 	initADC(); // initialize Analog input (control buttons)
 	
@@ -692,10 +686,7 @@ int main (void) {
 		if (pf_mount(&fileSystem) == FR_OK) {	/* Initialize FS */
 			
 			// check if a position is stored in position file
-			unsigned char ret = readAndUpdatePosition();
-			if (ret != 0) {
-				error(ret);
-			}
+			readAndUpdatePosition();
 			
 			// if no position is defined yet, wait for a button to be pressed
 			if (currentFile == 0) {
@@ -741,7 +732,7 @@ int main (void) {
 								
 			// load file
 			PLAYER_MODE playerMode = PLAY_MODE;
-			ret = loadCurrentFile();
+			uint8_t ret = loadCurrentFile();
 			unsigned char playFfRwAudioCluster = 0; // to make jumps hearable when FF or RW
 			unsigned char numberOfFfRwJumps = 0;
 			while (ret == 0) {				
@@ -758,7 +749,6 @@ int main (void) {
 						showLED();
 					}
 				} else if (ret) {
-					error(ret);
 					break;
 				}
 								
@@ -788,30 +778,22 @@ int main (void) {
 							lightLED(currentChannel - 1, 1);
 							showLED();
 						} else {
-							// wait for a potential second button press
-							uint8_t skip = 0;
-							for (int i = 0; i < SKIP_DOUBLECLICK_DELAY; i++) {
-								if (buttonPressed() == 10) {
-									skip = 1;
-									break;
-								}
-								delay_ms(1);
-							}
+							// wait for more button presses
+							// TODO this "- 1" isn't a very clear solution
+							uint8_t skip = multiClick(buttonValue) - 1; // minus 1 because pushing once means just replaying the song.
 							
-							// evaluate and execute "skip to last" or "replay current file"
+							// evaluate and execute "skip backwards" or "replay current file"
 							// skip backwards or to the start of the file
 							if (currentFile > 1 && (skip || fileSystem.fptr < (unsigned long)SKIP_BACKWARDS_THRESHOLD * 1024)) {
 								blinkSkipRw();
-								ret = skipToLast();
+								ret = skipBackwards(skip);
 								if (ret) {
-									error(ret);
 									break;
 								}
 							} else {
 								blinkFfRw();
-								ret= loadCurrentFile();
+								ret = loadCurrentFile();
 								if (ret) {
-									error(ret);
 									break;
 								}
 							}
@@ -832,20 +814,20 @@ int main (void) {
 							showLED();
 						} else {
 							// skip forward
+							uint8_t amount = multiClick(buttonValue);
 							blinkSkipFf();
-								ret = skipToNext();
+							ret = skip(amount);
 							if (ret) {
-								error(ret);
 								break;
 							}
 						}
 					} else if (buttonValue != 0 && playerMode == PLAY_MODE) {
 						// if any other button
 						if (buttonValue == currentChannel) {
+							uint8_t amount = multiClick(buttonValue);
 							blinkSkipFf();
-							ret = skipToNext();
+							ret = skip(amount);
 							if (ret) {
-								error(ret);
 								break;
 							}
 						} else {
@@ -856,7 +838,6 @@ int main (void) {
 							showLED();							
 							ret = loadCurrentFile();
 							if (ret) {
-								error(ret);
 								break;
 							}
 						}
@@ -898,7 +879,6 @@ int main (void) {
 					if (fileSystem.fptr > jumpSize) {
 						ret = pf_lseek(fileSystem.fptr - jumpSize);
 						if (ret) {
-							error(ret);
 							break;
 						}
 					} else {
@@ -906,7 +886,6 @@ int main (void) {
  						if (currentFile == 1) {
 							ret = pf_lseek(audioFileInfo.dataOffset);
 							if (ret) {
-								error(ret);
 								break;
 							}
 							// wait until no button is pressed, as funny noises may occur otherwise
@@ -915,17 +894,17 @@ int main (void) {
 							ret = skipToLast();
 							blinkSkipRw();
 							if (ret) {
-								error(ret);
 								break;
-							}
+							}
+
 							
 							// jump to almost end of file
  							ret = pf_lseek(fileSystem.fptr + audioFileInfo.numberOfSamples - jumpSize);
 							if (ret) {
-								error(ret);
 								break;
 							}
-						}
+						}
+
 					}
 				} else if (playerMode == FF_MODE && !playFfRwAudioCluster) {
 					toggleRwFf();
@@ -942,7 +921,6 @@ int main (void) {
 					if(samplesLeftToRead() > jumpSize) {
 						ret = pf_lseek(fileSystem.fptr + jumpSize);
 						if (ret) {
-							error(ret);
 							break;
 						}
 					} else {
@@ -958,8 +936,6 @@ int main (void) {
 			}
 
 			audio_off();	/* Disable audio output */
-		} else {
-			error(pf_mount(&fileSystem));
 		}
 	}
 }
